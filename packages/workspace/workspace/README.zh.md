@@ -87,7 +87,7 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 
 ### API 行为
 
-该 API 是一个由两个所有者构成的小家族：`WorkspaceRegistry` 负责创建、排序与删除项目并管理其会话记账；`Workspace` 实体暴露显示标题、目录状态与会话投影。各方法的精确约定在代码中，而非本 README——参见 [src/index.ts](src/index.ts) 与 [src/entity.ts](src/entity.ts)。
+该 API 是一个由两个所有者构成的小家族：`WorkspaceRegistry` 负责创建、排序、删除以及归档/取消归档项目并管理其会话记账；`Workspace` 实体暴露显示标题、目录状态与会话投影。客户端 `IWorkspaces.unarchiveSession(sessionId)` 恢复已归档会话（幂等——id 未被归档时为 no-op）；会话的物理删除位于 session controller 的 `delete`，从不在这里。各方法的精确约定在代码中，而非本 README——参见 [src/index.ts](src/index.ts) 与 [src/entity.ts](src/entity.ts)。
 
 ### 源码地图
 

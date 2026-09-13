@@ -13,10 +13,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconCloseFill14, IconPersonalizationOutline16,
-  IconProjectAddOutline16, IconSearchOutline16, Menu, Modal, Tooltip,
+  IconProjectAddOutline16, IconSearchOutline16,
+  IconArchiveOutline16, IconTriangleRightFill14,
+  Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  SessionListState, SessionSearchResultItem,
+  SessionListState, SessionSearchResultItem, SessionSummary,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -264,6 +266,8 @@ type SessionTreeProps = Pick<
   onSessionRename: (sessionId: SessionNode['id'], currentTitle: string) => void
   /** Archive a session (row menu action; the row disappears on the state echo). */
   onSessionArchive: (sessionId: SessionNode['id']) => void
+  /** Open the browser-owned destructive delete-confirmation dialog for a session. */
+  onSessionDelete: (sessionId: SessionNode['id'], title: string) => void
   /** Session order behavior: fixed after edits, or additionally promoted by user activity. */
   orderBy: SessionOrderBy
   /** One Session chosen from search that must be exposed and scrolled into view. */
@@ -276,7 +280,7 @@ type SessionTreeProps = Pick<
 function SessionTree({
   useSessions, useSessionPendingInteraction, startSession, open, forkSession, workspaces, archivedSessionIds,
   workspaceReady, usePanelInfo,
-  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
+  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onSessionDelete,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
   sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, home, t,
@@ -588,6 +592,7 @@ function SessionTree({
                     onRename={onSessionRename}
                     onFork={forkSession}
                     onArchive={onSessionArchive}
+                    onDelete={(deletedId) => { onSessionDelete(deletedId, node.title) }}
                     onReveal={node.id === revealSessionId && group.key === revealGroup
                       ? () => { onSessionRevealed(node.id) }
                       : undefined}
@@ -619,7 +624,7 @@ function SessionTree({
 
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
-  useSessions, useSessionPendingInteraction, open, forkSession, onSessionRename, onSessionArchive,
+  useSessions, useSessionPendingInteraction, open, forkSession, onSessionRename, onSessionArchive, onSessionDelete,
   archivedSessionIds, usePanelInfo,
   orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,
   revealSessionId, onSessionRevealed, t,
@@ -631,6 +636,7 @@ function FlatList({
   | 'forkSession'
   | 'onSessionRename'
   | 'onSessionArchive'
+  | 'onSessionDelete'
   | 'archivedSessionIds'
   | 'usePanelInfo'
   | 'orderBy'
@@ -715,6 +721,7 @@ function FlatList({
               onRename={onSessionRename}
               onFork={forkSession}
               onArchive={onSessionArchive}
+              onDelete={(deletedId) => { onSessionDelete(deletedId, node.title) }}
               onReveal={node.id === revealSessionId
                 ? () => { onSessionRevealed(node.id) }
                 : undefined}
@@ -853,6 +860,8 @@ export function WorkspaceBrowser({
   deleteWorkspace,
   insertWorkspaceBefore,
   archiveSession,
+  unarchiveSession,
+  deleteSession,
   insertSessionBefore,
   createWorkspace,
   searchSessions,
@@ -1085,6 +1094,56 @@ export function WorkspaceBrowser({
     })
   }
 
+  // Unarchive is dialog-free (a pure restore of grouping visibility); the row
+  // returns to its group when the archive-set echo lands.
+  const onSessionUnarchive = (sessionId: SessionNode['id']) => {
+    unarchiveSession(sessionId).catch((reason: unknown) => {
+      console.warn('session unarchive rejected:', reason)
+    })
+  }
+
+  // Both archived and ended-but-unarchived rows open the same destructive
+  // confirmation dialog before physically deleting the session's durable log.
+  const openDeleteSessionDialog = (sessionId: SessionNode['id'], title: string) => {
+    setDeleteSessionTarget({ sessionId, title })
+    setDeleteSessionError(null)
+  }
+
+  // Session deletion is destructive and physical (the durable log is gone for
+  // good), so it is gated behind a confirmation dialog, mirroring the Workspace
+  // delete flow. The dialog lives here (not on the row) so a committed removal
+  // can unmount the row without tearing down in-flight confirmation state.
+  const [deleteSessionTarget, setDeleteSessionTarget] = useState<{ sessionId: SessionNode['id']; title: string } | null>(null)
+  const [deletingSession, setDeletingSession] = useState(false)
+  const [deleteSessionCommittedId, setDeleteSessionCommittedId] = useState<SessionNode['id'] | null>(null)
+  const [deleteSessionError, setDeleteSessionError] = useState<string | null>(null)
+  const deleteSessionById = useSessions(s => s.byId)
+  useEffect(() => {
+    if (deleteSessionCommittedId === null
+      || deleteSessionById[deleteSessionCommittedId] !== undefined) return
+    setDeletingSession(false)
+    setDeleteSessionCommittedId(null)
+    setDeleteSessionTarget(null)
+  }, [deleteSessionCommittedId, deleteSessionById])
+  const closeDeleteSession = () => {
+    if (deletingSession) return
+    setDeleteSessionTarget(null)
+    setDeleteSessionError(null)
+  }
+  const confirmDeleteSession = () => {
+    /* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
+    if (deletingSession || deleteSessionTarget === null) return
+    setDeletingSession(true)
+    setDeleteSessionCommittedId(null)
+    setDeleteSessionError(null)
+    deleteSession(deleteSessionTarget.sessionId).then(() => {
+      setDeleteSessionCommittedId(deleteSessionTarget.sessionId)
+    }).catch((reason: unknown) => {
+      setDeletingSession(false)
+      setDeleteSessionError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
   // Delete dialog is separate from the row so a successful removal can
   // unmount that row without tearing down the in-flight confirmation state.
   const [deleteTarget, setDeleteTarget] = useState<{ workspaceId: WorkspaceId; title: string } | null>(null)
@@ -1284,6 +1343,7 @@ export function WorkspaceBrowser({
                 setSessionOrder={actions.setSessionOrder}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
+                onSessionDelete={openDeleteSessionDialog}
                 t={t}
               />
             )
@@ -1322,8 +1382,22 @@ export function WorkspaceBrowser({
                   setDeleteTarget({ workspaceId, title })
                   setDeleteError(null)
                 }}
+                onSessionDelete={openDeleteSessionDialog}
               />
             ))}
+        {wide && normalizedQuery === '' && (
+          <ArchivedSessions
+            archivedSessionIds={archivedSessionIds}
+            useSessions={useSessions}
+            open={open}
+            onUnarchive={onSessionUnarchive}
+            onDeleteRequest={(sessionId, title) => {
+              setDeleteSessionTarget({ sessionId, title })
+              setDeleteSessionError(null)
+            }}
+            t={t}
+          />
+        )}
       </div>
 
       <Modal
@@ -1417,6 +1491,118 @@ export function WorkspaceBrowser({
         {deleting && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
         {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
       </Modal>
+      <Modal
+        open={deleteSessionTarget !== null}
+        onClose={closeDeleteSession}
+        closeLabel={t('close')}
+        title={t('delete.session')}
+        {...deleteSessionTarget === null
+          ? {}
+          : { description: t('delete.session.desc', { name: deleteSessionTarget.title }) }}
+        footer={(
+          <>
+            <Button variant="outline" disabled={deletingSession} onClick={closeDeleteSession}>{t('cancel')}</Button>
+            <Button
+              variant="outline"
+              className={css.deleteAction}
+              disabled={deletingSession}
+              onClick={confirmDeleteSession}
+            >
+              {t('delete.session')}
+            </Button>
+          </>
+        )}
+      >
+        {deletingSession && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
+        {deleteSessionError !== null && <div className={css.renameError} role="alert">{deleteSessionError}</div>}
+      </Modal>
+    </div>
+  )
+}
+
+/**
+ * Collapsed-by-default footer listing Sessions in the registry-global archive
+ * set. Archived rows expose **Restore** and **Delete** (the latter gated behind
+ * the browser-owned confirmation dialog); active Sessions can never appear
+ * here, so the UI never offers a delete affordance on a live row.
+ * @param props.archivedSessionIds - complete Host archive set, Host order.
+ * @param props.useSessions - Session list snapshot hook (resolves archived titles).
+ * @param props.open - open a Session by id.
+ * @param props.onUnarchive - restore an archived Session to grouping surfaces.
+ * @param props.onDeleteRequest - open the destructive delete confirmation.
+ * @param props.t - the browser root's locale seat.
+ */
+function ArchivedSessions({
+  archivedSessionIds,
+  useSessions,
+  open,
+  onUnarchive,
+  onDeleteRequest,
+  t,
+}: {
+  archivedSessionIds: readonly SessionNode['id'][]
+  useSessions: WorkspaceBrowserProps['useSessions']
+  open: (sessionId: SessionNode['id']) => void
+  onUnarchive: (sessionId: SessionNode['id']) => void
+  onDeleteRequest: (sessionId: SessionNode['id'], title: string) => void
+  t: WorkspaceBrowserProps['t']
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const byId = useSessions(state => state.byId) as Record<SessionNode['id'], SessionSummary | undefined>
+  const current = useSessions(state => state.current)
+  const now = Date.now()
+  const rows = useMemo(() => archivedSessionIds.map((id): { id: SessionNode['id']; node: SessionNode } => {
+    const summary = byId[id]
+    return {
+      id,
+      node: {
+        id,
+        title: summary?.displayTitle ?? String(id),
+        blank: summary?.blank ?? false,
+        running: summary?.running ?? false,
+        runningSubagentCount: 0,
+        completed: summary?.completed ?? false,
+        hasActiveSchedule: (summary?.projectionValues?.schedule?.length ?? 0) > 0,
+        updatedAt: summary?.updatedAt ?? now,
+      },
+    }
+  }), [archivedSessionIds, byId, now])
+
+  return (
+    <div className={css.archivedSection}>
+      <button
+        type="button"
+        className={css.archivedHeader}
+        aria-expanded={expanded}
+        onClick={() => { setExpanded(v => !v) }}
+      >
+        <span className={css.archivedIcon}>
+          <IconArchiveOutline16 />
+        </span>
+        <span className={css.archivedLabel}>{t('section.archived')}</span>
+        <span className={css.archivedCount}>{archivedSessionIds.length}</span>
+        <IconTriangleRightFill14 size={14} className={css.archivedChevron} />
+      </button>
+      {expanded && (
+        <div className={css.archivedList}>
+          {rows.map(({ id, node }) => (
+            <SessionNodeItem
+              key={id}
+              node={node}
+              currentId={current}
+              now={now}
+              onOpen={open}
+              onRename={() => {}}
+              onFork={() => {}}
+              onArchive={() => {}}
+              archived
+              onUnarchive={onUnarchive}
+              onDelete={(deletedId) => { onDeleteRequest(deletedId, node.title) }}
+              t={t}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

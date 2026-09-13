@@ -96,6 +96,14 @@ export interface ISessions {
    */
   fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId>
   /**
+   * Physically destroy a Session's durable log on the Host (idempotent for an
+   * absent id). Refused while the Session is still active; callers should stop
+   * the running Agent first.
+   * @param sessionId - Session to delete.
+   * @throws when the delete fails (including an active-session rejection).
+   */
+  delete(sessionId: SessionId): Promise<void>
+  /**
    * Resolve an Agent-scoped context view (use-and-discard).
    * @param id - session id.
    * @returns scoped ctx, or undefined for a session neither listed nor already scoped.

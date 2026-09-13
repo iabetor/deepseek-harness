@@ -33,6 +33,23 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         readonly wrap: boolean
         /** Report a renderer-owned scrollport; passing `null` restores the shared body as the owner. */
         readonly scrollportRef: RefCallback<HTMLElement>
+        /**
+         * Re-read this document from its first line after the renderer itself
+         * changed the file.
+         *
+         * A renderer that writes to the file it displays (an editor, or a
+         * change-review overlay applying or reverting a hunk) then holds content
+         * the Host has already superseded. The owner learns that only from the
+         * version on a later metadata frame, and answers it with the manual
+         * "file changed, showing previous content" bar — right for a change the
+         * reader did not make, needless friction for one the renderer just made
+         * and can report itself. Calling this reuses the owner's own reload path,
+         * so the pages, the observed version, and that bar settle in one step
+         * instead of waiting for the reader to click. The scroll position holds.
+         *
+         * No-op when the document cannot be read or has no loaded version yet.
+         */
+        readonly reload: () => void
       }
       hookContext: UseSidebarRightTabInfo
       inject: {

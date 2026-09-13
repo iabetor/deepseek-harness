@@ -192,6 +192,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly existingCwd?: string
     }
     'session/agent-busy': { readonly reason: string }
+    'session/active': { readonly sessionId: SessionId }
     'session/invalid-time-zone': { readonly value: string }
     'session/workspace-attach-failed': { readonly sessionId: SessionId; readonly workspaceId: string }
     'agent-preset/conflict': {
@@ -295,6 +296,16 @@ export interface SessionRenameRequest {
 export interface SessionRenameValue {
   readonly title: string
   readonly seq: number
+}
+
+/** Session physically-destroy request. A live (running or in-memory) Session is rejected. */
+export interface SessionDeleteRequest {
+  readonly sessionId: SessionId
+}
+
+/** Receipt after one Session's durable log is destroyed. */
+export interface SessionDeleteValue {
+  readonly deleted: true
 }
 
 /** Session fork request. */
@@ -585,6 +596,14 @@ declare module '@deepseek-ai/cordis' {
      * @param sessionId - removed Session identity.
      */
     'api-session/removed'(sessionId: SessionId): void
+    /**
+     * A Session's durable log was physically destroyed (session.delete). Cold
+     * and archived Sessions have no live registry entry, so this is the only
+     * signal that clears their client rows.
+     * @mode emit
+     * @param sessionId - destroyed Session identity.
+     */
+    'sessionPersistence:deleted'(sessionId: SessionId): void
     /**
      * One Agent changed running state.
      * @mode emit

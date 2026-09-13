@@ -61,9 +61,14 @@ export function apply(ctx: ClientContext): void {
       const now = Date.now()
       const home = ctx.remote.$host.home
       const listed = sessions.list.getSnapshot().byId
+      // Defense in depth on top of the host-side blank filter: a blank Session
+      // (no events — a provisional New Session placeholder) carries nothing to
+      // reference, so it never earns a row in the `@` menu even if the host
+      // candidate listing could not judge it.
+      const nonBlankSessionItems = sessionItems.filter(candidate => listed[candidate.sessionId]?.blank !== true)
       return [
         ...fileItems.flatMap(candidate => fileCandidate(candidate, quoted === true, withLocation, t)),
-        ...sessionItems.map(candidate => sessionCandidate(
+        ...nonBlankSessionItems.map(candidate => sessionCandidate(
           candidate,
           listed[candidate.sessionId]?.updatedAt ?? candidate.createdAt,
           now,

@@ -16,7 +16,11 @@ import {
 import type { MessageSource } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
-import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
+import {
+  SessionQueryError,
+  type SessionLineageNode,
+  type SessionObservation,
+} from '@deepseek-ai/dsh-session-query'
 import { SessionTitleInvalidError } from '@deepseek-ai/dsh-session-title'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -39,6 +43,8 @@ import type {
   SessionCancelValue,
   SessionCreateRequest,
   SessionCreateValue,
+  SessionDeleteRequest,
+  SessionDeleteValue,
   SessionForkRequest,
   SessionForkValue,
   SessionPromptRequest,
@@ -192,6 +198,121 @@ export class SessionCommandController {
         {},
       )
     }
+  }
+
+  /**
+   * Physically destroy one Session's durable log. A live Session — one with a
+   * running or just-created Agent, or still held in the in-memory Session store
+   * — is never destroyed: the caller must stop it (or archive then let it cool)
+   * first, so a concurrent append cannot race the removal. Archiving removes
+   * the id from the registry archive set before the durable log is deleted, and
+   * the deletion is idempotent for an already-absent Session.
+   *
+   * The deletion cascades: every durable subagent descendant of the Session is
+   * physically destroyed too (children first, then the Session), because a
+   * child log whose parent no longer exists is unreachable from every list.
+   * Descendants with a running Agent refuse the whole deletion, and each
+   * destroyed id is detached from its owning workspace account so no ghost
+   * membership survives in the registry.
+   * @param request - Session identity to destroy.
+   * @returns the deletion receipt.
+   */
+  async delete(request: SessionDeleteRequest): Promise<SessionDeleteValue> {
+    const sessionId = brandString<SessionId>(request.sessionId)
+    // Active guard: refuse only while the Session's Agent is actually running
+    // (status 'running'). A Session may hold an idle Agent instance in memory
+    // after its turn ends (or after being archived) without any concurrent
+    // activity, and is safe to physically destroy then. This is the
+    // authoritative fence; the UI hides the affordance on running rows.
+    const agent = this.ctx.get('agents')?.get(sessionId)
+    if (agent !== undefined && agent.status === 'running') {
+      throw new RemoteError('session/active', `cannot delete active Session "${sessionId}": stop it first`, {
+        sessionId,
+      })
+    }
+    const persistence = this.ctx.get('sessionPersistence')
+    if (persistence === undefined) {
+      throw new RemoteError('gateway/internal', 'session persistence is unavailable in this deployment', {})
+    }
+    // Cascade over the durable subagent subtree below this Session. A running
+    // descendant refuses the whole deletion (the active guard above only
+    // covers the Session itself); children are destroyed before their parent.
+    const cascade = await this.deleteCascade(sessionId)
+    // Drop from the registry archive set (idempotent no-op when not archived).
+    await this.ctx.workspaceRegistry.unarchiveSession(sessionId)
+    for (const id of cascade) {
+      // Remove the workspace accounting slot so the registry keeps no ghost
+      // membership for a Session whose durable log is gone (the sidebar and
+      // cold list would otherwise keep offering it). Idempotent when the
+      // Session never had a slot.
+      for (const workspace of this.ctx.workspaceRegistry.list()) {
+        await workspace.detachSession(id)
+      }
+      // Physically destroy the durable log.
+      await persistence.destroy(id)
+      // Drop the live registry entry too. A Session may still hold an idle
+      // Agent instance (turn ended, not running) or a cold/archived entry in
+      // the live store after its log is gone, and discovery that reads the
+      // live store — notably `@`-mention candidate listing via
+      // sessionQuery.listSessions — would otherwise keep offering a Session
+      // whose persistence no longer exists. expel is a no-op when no live
+      // entry matches, so already-detached cold Sessions are unaffected.
+      // Emitting session/disposed (when the entry was announced) also evicts
+      // the projection cache for this Session.
+      this.ctx.sessions.expel(id)
+      // Cold and archived Sessions have no live registry entry, so this is the
+      // only signal that clears their client rows.
+      this.ctx.emit('sessionPersistence:deleted', id)
+    }
+    return { deleted: true }
+  }
+
+  /**
+   * Resolve the ordered physical-destruction list for one Session subtree.
+   * @param sessionId - root Session identity to destroy.
+   * @returns the root plus every durable subagent descendant, children before
+   *   parents, with the root last; always contains the root.
+   */
+  private async deleteCascade(sessionId: SessionId): Promise<SessionId[]> {
+    const query = this.ctx.get('sessionQuery')
+    const order: SessionId[] = []
+    if (query !== undefined) {
+      try {
+        // A cold delete may target a Session whose log is already absent (the
+        // cascade is idempotent); the trace then has no corpus target and is
+        // skipped, leaving only the root to destroy.
+        const trace = await query.traceSession(sessionId)
+        const visit = (node: SessionLineageNode): void => {
+          for (const child of node.descendants) visit(child)
+          if (node.session.header.origin === 'subagent') {
+            order.push(node.session.header.id)
+          }
+        }
+        for (const child of trace.descendants) visit(child)
+      } catch (error) {
+        if (error instanceof SessionQueryError
+          && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
+          this.ctx.logger.debug(
+            `session.delete: no corpus entry for "${sessionId}"; destroying only the requested Session`,
+          )
+        } else {
+          throw error
+        }
+      }
+    }
+    order.push(sessionId)
+    const agents = this.ctx.get('agents')
+    for (const id of order) {
+      const agent = agents?.get(id)
+      if (agent !== undefined && agent.status === 'running') {
+        throw new RemoteError(
+          'session/active',
+          `cannot delete active Session "${sessionId}": descendant "${id}" is still running, stop it first`,
+          { sessionId },
+        )
+      }
+    }
+    return order
   }
 
   /**

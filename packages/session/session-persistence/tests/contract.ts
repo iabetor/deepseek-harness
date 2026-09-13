@@ -269,6 +269,32 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
       }
     })
 
+    it('destroy physically removes the session and its events, idempotent for an absent id', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        // Idempotent: destroying an unknown id is a no-op, never an error.
+        await persistence.destroy(SessionId('absent'))
+
+        const m = meta('del', '/work')
+        const creator = await persistence.create(m)
+        await creator.append(oneTurnLog())
+        await creator.close()
+        expect((await persistence.list()).map(x => x.header.id)).toContain(m.id)
+        expect(await persistence.stat(m.id)).toBeDefined()
+
+        // Destruction removes the header and every event from the durable store.
+        await persistence.destroy(m.id)
+        expect((await persistence.list()).map(x => x.header.id)).not.toContain(m.id)
+        expect(await persistence.stat(m.id)).toBeUndefined()
+        await expect(persistence.open(m.id, 'read')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+
+        // Re-destroy is still a no-op.
+        await persistence.destroy(m.id)
+      } finally {
+        await dispose()
+      }
+    })
+
     it('a read handle refuses append and flush with SessionReadOnlyError', async () => {
       const { persistence, dispose } = await make()
       try {

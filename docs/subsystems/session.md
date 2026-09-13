@@ -790,6 +790,15 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('fork') fork(request: SessionForkRequest): Promise<SessionForkValue>
 
 /**
+ * Physically destroy one Session's durable log. A live Session is rejected by
+ * the command's active guard; the registry archive set is cleared first so an
+ * archived Session leaves no dangling reference after deletion.
+ * @param request - Session identity to destroy.
+ * @returns the deletion receipt.
+ */
+@Remote('delete') delete(request: SessionDeleteRequest): Promise<SessionDeleteValue>
+
+/**
  * Admit one prompt after explicitly resuming its Session.
  * @param request - Session identity, prompt content, source metadata, and delivery mode.
  * @param signal - caller cancellation before prompt admission begins.
@@ -923,6 +932,19 @@ prepare(id?: SessionId, options?: PrepareSessionOptions): Session
  * @throws if a session with this id is already in the store.
  */
 enter(session: Session): () => void
+
+/**
+ * Force-remove one live session from the store by id, emitting its paired
+ * `session/disposed` when the entry was announced. Intended for physical
+ * destruction paths (e.g. `session.delete`): the durable log is already gone,
+ * so the live registry entry must be dropped too — otherwise discovery that
+ * reads the live store (such as `@`-mention candidate listing) keeps offering
+ * a session whose persistence no longer exists. A no-op when no live entry
+ * matches, so cold/archived sessions (already detached) are safe to expel.
+ * @param id - the session to remove from the live store.
+ * @returns whether a live entry was removed.
+ */
+expel(id: SessionId): boolean
 
 /** Emit `session/created` exactly once for an {@link enter}ed session (with
  * the carrier {@link enter} captured). Separate from {@link enter} so the

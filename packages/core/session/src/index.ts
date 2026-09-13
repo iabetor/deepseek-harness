@@ -1068,6 +1068,24 @@ export class SessionStore extends Service {
     return detach
   }
 
+  /**
+   * Force-remove one live session from the store by id, emitting its paired
+   * `session/disposed` when the entry was announced. Intended for physical
+   * destruction paths (e.g. `session.delete`): the durable log is already gone,
+   * so the live registry entry must be dropped too — otherwise discovery that
+   * reads the live store (such as `@`-mention candidate listing) keeps offering
+   * a session whose persistence no longer exists. A no-op when no live entry
+   * matches, so cold/archived sessions (already detached) are safe to expel.
+   * @param id - the session to remove from the live store.
+   * @returns whether a live entry was removed.
+   */
+  expel(id: SessionId): boolean {
+    const entry = this.store.get(id)
+    if (entry === undefined) return false
+    this.detachEntered(entry)
+    return true
+  }
+
   /** Remove one exact entered session and emit its paired disposal when announced. */
   private detachEntered(entry: SessionEntry): void {
     entry.detachRequested = false

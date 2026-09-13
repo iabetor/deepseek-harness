@@ -67,6 +67,15 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionReferenceResolver: SessionReferenceResolver
   }
+  interface Events {
+    /**
+     * A Session's durable log was physically destroyed; drop any reference
+     * candidates and snapshot data that pointed at it.
+     * @param sessionId - destroyed Session identity.
+     * @mode emit
+     */
+    'sessionPersistence:deleted'(sessionId: SessionId): void
+  }
 }
 
 interface PreparedSource {
@@ -93,6 +102,9 @@ export class SessionReferenceResolver extends TypertRemoteService {
 
   private readonly config: Required<Omit<Config, 'maxReferenceBytes'>> & { maxReferenceBytes: number | undefined }
   private readonly assembledRoutes = new WeakMap<Agent, { provider: string | undefined; model: string | undefined }>()
+
+  /** Session ids physically destroyed since this resolver started; excluded from candidate listing. */
+  private _deleted: Set<SessionId>
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'sessionReferenceResolver')
@@ -123,6 +135,14 @@ export class SessionReferenceResolver extends TypertRemoteService {
         'SESSION_REFERENCE_INVALID_CONFIG',
       )
     }
+    // Defense in depth: a physically deleted Session must never resurface as a
+    // reference candidate. The query corpus drops the live entry on delete and
+    // the projection cache evicts on session/disposed, but track deletions here
+    // too so candidate listing cannot offer a Session whose durable log is gone.
+    this._deleted = new Set<SessionId>()
+    ctx.on('sessionPersistence:deleted', (sessionId: SessionId) => {
+      this._deleted.add(sessionId)
+    })
     // Prepend observes model-selection overrides after downstream assembly completes.
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const assembly = await next()
@@ -202,6 +222,16 @@ export class SessionReferenceResolver extends TypertRemoteService {
     assertNotCancelled(signal)
     const records = (await settleWithCancellation(this.ctx.sessionQuery.listSessions(signal), signal))
       .filter(record => record.header.id !== agent.id)
+      .filter(record => !this._deleted.has(record.header.id))
+      // A blank Session (no events since creation) carries no content to
+      // reference: it is a provisional New Session placeholder the sidebar
+      // hides unless selected, so offering it as a reference candidate would
+      // only add noise to the `@` menu. Judged without reading logs: live
+      // Sessions answer from their in-memory seq (0 = empty), cold Sessions
+      // from the durable projection cache, and a cache miss stays visible
+      // (same conservative default as the session list — never mislabel a
+      // content-bearing legacy Session as blank).
+      .filter(record => !this.isBlank(record))
       .map((record, index) => ({ record, index }))
     const labelled = records.map(({ record, index }) => ({
       record,
@@ -225,6 +255,37 @@ export class SessionReferenceResolver extends TypertRemoteService {
       }))
   }
 
+  /**
+   * Whether a Session has no conversation yet (blank), judged without reading
+   * its log so keystroke-rate candidate listing stays cheap. Blank follows the
+   * session-list `sessionListMetadata` semantics: any `turn/start` event ends
+   * blankness — a Session that only carries bookkeeping events (a provisional
+   * New Session placeholder, a seeded shell) has nothing to reference. Live
+   * Sessions answer from their in-memory events; cold Sessions from the
+   * durable projection cache; a cache miss defaults to false (visible) — the
+   * same conservative default the session list uses, so a legacy Session
+   * without a checkpoint is never mislabelled blank.
+   * @param record - the listed logical session.
+   * @returns true when the Session is provably blank.
+   */
+  private isBlank(record: SessionRecord): boolean {
+    const live = this.ctx.get('sessions')?.get(record.header.id)
+    if (live !== undefined) {
+      return !live.snapshotEvents().some(event => event.type === 'turn/start')
+    }
+    // Seeded Sessions (fork children) never consult the projection cache: their
+    // log identity includes an inherited prefix the cache cannot witness.
+    if (record.header.isSeeded) return false
+    const block = this.ctx.get('sessionProjectionCache')?.cachedSnapshot(
+      record.header,
+      SessionLogOffset(0),
+    )
+    // `sessionListMetadata` is a host-only projection key merged by the Session
+    // Controller, invisible to this package's type table; read it opaquely.
+    const values = block?.values as Record<string, unknown> | undefined
+    const metadata = values?.sessionListMetadata as { blank?: boolean } | undefined
+    return metadata?.blank === true
+  }
   /**
    * The title a session's projections can answer without reading its log.
    *

@@ -1519,6 +1519,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the new Session identity.',
       },
       {
+        signature: '@Remote(\'delete\') delete(request: SessionDeleteRequest): Promise<SessionDeleteValue>',
+        description: 'Physically destroy one Session\'s durable log. A live Session is rejected by the command\'s active guard; the registry archive set is cleared first so an archived Session leaves no dangling reference after deletion.',
+        parameters: [{ name: 'request', description: 'Session identity to destroy.' }],
+        returns: 'the deletion receipt.',
+      },
+      {
         signature: '@Remote(\'prompt\') prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>',
         description: 'Admit one prompt after explicitly resuming its Session.',
         parameters: [{ name: 'request', description: 'Session identity, prompt content, source metadata, and delivery mode.' }, { name: 'signal', description: 'caller cancellation before prompt admission begins.' }],
@@ -1625,6 +1631,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'List every stored session visible to this process, in no promised order.',
         parameters: [{ name: 'options', description: 'optional cancellation.' }],
         returns: 'one snapshot per stored session.',
+      },
+      {
+        signature: 'abstract destroy(id: SessionId, options?: SessionPersistenceStatOptions): Promise<void>',
+        description: 'Physically destroy a session\'s entire durable log: its header metadata and every stored event, irrecoverably. Callers must ensure the session is not live (no running Agent and no in-memory Session entry) before deletion, so a concurrent append cannot race the removal — this method only removes stored bytes and never stops or detaches a live session.\n\nIdempotent: destroying an unknown or already-removed session resolves without error, so callers may destroy without first probing presence.',
+        parameters: [{ name: 'id', description: 'the persisted session whose durable log must be destroyed.' }, { name: 'options', description: 'optional cancellation.' }],
       },
     ],
   },
@@ -1889,6 +1900,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'session', description: 'a {@link prepare}d session not yet in the store.' }],
         returns: 'the detach disposer (publication hooks + store removal). When called from a synchronous `session/created` listener, removal and disposal wait until that creation dispatch unwinds.',
         throws: ['if a session with this id is already in the store.'],
+      },
+      {
+        signature: 'expel(id: SessionId): boolean',
+        description: 'Force-remove one live session from the store by id, emitting its paired `session/disposed` when the entry was announced. Intended for physical destruction paths (e.g. `session.delete`): the durable log is already gone, so the live registry entry must be dropped too — otherwise discovery that reads the live store (such as `@`-mention candidate listing) keeps offering a session whose persistence no longer exists. A no-op when no live entry matches, so cold/archived sessions (already detached) are safe to expel.',
+        parameters: [{ name: 'id', description: 'the session to remove from the live store.' }],
+        returns: 'whether a live entry was removed.',
       },
       {
         signature: 'announce(session: Session): void',
@@ -2909,6 +2926,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting archive set.',
       },
       {
+        signature: '@Remote(\'unarchiveSession\') unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceUnarchiveValue>',
+        description: 'Restore one archived Session to Workspace grouping surfaces.',
+        parameters: [{ name: 'request', description: 'Session identity to unarchive.' }],
+        returns: 'the complete resulting archive set.',
+      },
+      {
         signature: '@Remote({ mode: \'stream\' }) follow(signal: AbortSignal): AsyncIterable<WorkspaceFollowFrame>',
         description: 'Stream a complete Workspace baseline followed by ordered increments.',
         parameters: [{ name: 'signal', description: 'generation cancellation.' }],
@@ -3004,6 +3027,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'archiveSession(sessionId: SessionId): Promise<void>',
         description: 'Archive one session durably. The session must exist (live or in session persistence); its workspace accounting — or lack of one — is irrelevant. An already archived id resolves without writing.',
         parameters: [{ name: 'sessionId', description: 'The session to archive.' }],
+        returns: 'resolution after durability.',
+      },
+      {
+        signature: 'unarchiveSession(sessionId: SessionId): Promise<void>',
+        description: 'Remove one session from the registry-global archive set, restoring its grouping-surface visibility and (when it still has a workspace accounting slot) its prior position. A non-archived id resolves without writing. The durable write flows through the same change listener that broadcasts `host/archived-sessions-changed`, so clients learn of the removal.',
+        parameters: [{ name: 'sessionId', description: 'The session to unarchive.' }],
         returns: 'resolution after durability.',
       },
       {
@@ -3377,6 +3406,38 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Awaited parallel durability checkpoint: every listener runs and the caller awaits all of them, with no waterfall veto.',
     description: 'Awaited parallel durability checkpoint: every listener runs and the caller awaits all of them, with no waterfall veto. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`) reuses the session\'s owner scope.',
     parameters: [{ name: 'session', description: 'the session whose buffered events must reach durable storage.' }],
+  },
+  {
+    name: 'sessionPersistence:deleted',
+    mode: 'emit',
+    signature: '\'sessionPersistence:deleted\'(sessionId: SessionId): void',
+    summary: 'A Session\'s durable log was physically destroyed (session.delete).',
+    description: 'A Session\'s durable log was physically destroyed (session.delete). Cold and archived Sessions have no live registry entry, so this is the only signal that clears their client rows.',
+    parameters: [{ name: 'sessionId', description: 'destroyed Session identity.' }],
+  },
+  {
+    name: 'sessionPersistence:deleted',
+    mode: 'emit',
+    signature: '\'sessionPersistence:deleted\'(sessionId: SessionId): void',
+    summary: 'A Session\'s durable log was physically destroyed (session.delete); remove its derived checkpoint so no ghost record outlives the log.',
+    description: 'A Session\'s durable log was physically destroyed (session.delete); remove its derived checkpoint so no ghost record outlives the log.',
+    parameters: [{ name: 'sessionId', description: 'destroyed Session identity.' }],
+  },
+  {
+    name: 'sessionPersistence:deleted',
+    mode: 'emit',
+    signature: '\'sessionPersistence:deleted\'(sessionId: SessionId): void',
+    summary: 'A Session\'s durable log was physically destroyed; remove its derived documents from the query index.',
+    description: 'A Session\'s durable log was physically destroyed; remove its derived documents from the query index.',
+    parameters: [{ name: 'sessionId', description: 'destroyed Session identity.' }],
+  },
+  {
+    name: 'sessionPersistence:deleted',
+    mode: 'emit',
+    signature: '\'sessionPersistence:deleted\'(sessionId: SessionId): void',
+    summary: 'A Session\'s durable log was physically destroyed; drop any reference candidates and snapshot data that pointed at it.',
+    description: 'A Session\'s durable log was physically destroyed; drop any reference candidates and snapshot data that pointed at it.',
+    parameters: [{ name: 'sessionId', description: 'destroyed Session identity.' }],
   },
   {
     name: 'settings/document-updated',
@@ -5099,6 +5160,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionCreateValue {\n    readonly sessionId: SessionId;\n    readonly agentPreset?: string;\n}',
   },
   {
+    name: 'SessionDeleteRequest',
+    declaration: 'export interface SessionDeleteRequest {\n    readonly sessionId: SessionId;\n}',
+  },
+  {
+    name: 'SessionDeleteValue',
+    declaration: 'export interface SessionDeleteValue {\n    readonly deleted: true;\n}',
+  },
+  {
     name: 'SessionEvent',
     declaration: 'export type SessionEvent<T extends SessionEventType = SessionEventType> = {\n    [K in SessionEventType]: {\n        type: K;\n        seq: SessionSeq;\n        time: number;\n        data: SessionEventMap[K];\n        ignorable?: true;\n    } & (K extends SurfaceEventType ? SurfaceIntent<K> : {\n        surfaceOp?: never;\n        sourceEventSeqs?: never;\n    });\n}[T];',
   },
@@ -6505,6 +6574,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceRenameRequest',
     declaration: 'export interface WorkspaceRenameRequest {\n    readonly workspaceId: WorkspaceId;\n    readonly title: string;\n}',
+  },
+  {
+    name: 'WorkspaceUnarchiveSessionRequest',
+    declaration: 'export interface WorkspaceUnarchiveSessionRequest {\n    readonly sessionId: SessionId;\n}',
+  },
+  {
+    name: 'WorkspaceUnarchiveValue',
+    declaration: 'export interface WorkspaceUnarchiveValue {\n    readonly archivedSessionIds: readonly SessionId[];\n}',
   },
   {
     name: 'WorkspaceValue',

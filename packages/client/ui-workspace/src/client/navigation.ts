@@ -7,7 +7,7 @@ import type {
   SessionListState,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
-  IWorkspaces, WorkspaceId, WorkspaceView,
+  IWorkspaces, WorkspaceId, WorkspaceSnapshot, WorkspaceView,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -44,10 +44,22 @@ export interface UiWorkspace {
    */
   startSession(workspaceId?: WorkspaceId): void
   /**
-   * Archive a Session and clear it when it is the current selection.
+   * Archive a Session and, when it is the current selection, steer the stage
+   * onward by the same rule that follows a deletion.
    * @param sessionId - Session to archive.
    */
   archiveSession(sessionId: SessionId): Promise<void>
+  /**
+   * Restore an archived Session to Workspace grouping surfaces.
+   * @param sessionId - Session to restore.
+   */
+  unarchiveSession(sessionId: SessionId): Promise<void>
+  /**
+   * Physically destroy a Session's durable log. Refused while the Session is
+   * active; callers should stop the running Agent first.
+   * @param sessionId - Session to delete.
+   */
+  deleteSession(sessionId: SessionId): Promise<void>
   /**
    * Open the Host-native directory picker.
    * @returns the selected directory, or null when cancelled.
@@ -173,7 +185,72 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   async archiveSession(sessionId: SessionId): Promise<void> {
+    const wasCurrent = this.sessions.list.getSnapshot().current === sessionId
     await this.workspaces.archiveSession(sessionId)
+    // Archiving the current Session drops the selection through
+    // clearArchivedCurrent, which alone strands the stage on the no-session
+    // hero: a blank new-session look whose Workspace chip falls back to the
+    // "Choose workspace" placeholder. Steer it onward by the same rule that
+    // follows a deletion, so both removal actions leave the same stage.
+    // Archiving a non-current Session never moves the stage.
+    if (wasCurrent) this.navigateAfterRemoval(sessionId, 'archive')
+  }
+
+  async unarchiveSession(sessionId: SessionId): Promise<void> {
+    await this.workspaces.unarchiveSession(sessionId)
+  }
+
+  async deleteSession(sessionId: SessionId): Promise<void> {
+    const wasCurrent = this.sessions.list.getSnapshot().current === sessionId
+    await this.sessions.delete(sessionId)
+    // Deleting the current Session leaves the layout on the no-session empty
+    // state (masked gap). Navigate onward instead; when no destination exists
+    // the destroyed selection is still retained, so clear it to settle on that
+    // empty state. Deleting a non-current Session never moves the stage.
+    if (wasCurrent && !this.navigateAfterRemoval(sessionId, 'delete')) this.sessions.clear()
+  }
+
+  /**
+   * Steer the stage after the current Session left the browsing surface,
+   * either physically destroyed (delete) or archived. Prefers the owning
+   * Workspace's most recently updated remaining Session (user-chosen ordering:
+   * recency beats list position). When the Workspace has no remaining engaged
+   * Session, reuse its blank placeholder or create a fresh one through the
+   * normal connect path — the same "open a new Session" flow the New Session
+   * affordance drives. A removed Session outside every Workspace falls back to
+   * the most recently active Workspace.
+   * @param removedId - the Session that just left the browsing surface.
+   * @param action - the removal that triggered it, for the failure diagnostic.
+   * @returns whether a destination exists. False leaves the caller to decide
+   *   the empty-stage policy; archive never needs one, because its archive-set
+   *   echo already cleared the selection.
+   */
+  private navigateAfterRemoval(removedId: SessionId, action: 'delete' | 'archive'): boolean {
+    const workspaces = this.workspaces.list.getSnapshot()
+    const sessions = this.sessions.list.getSnapshot()
+    const workspace = workspaces.items.find(item => item.sessionIds.includes(removedId))
+    const target = workspace?.workspaceId
+      ?? (workspaces.phase === 'ready' ? recentWorkspace(workspaces.items, sessions.byId) : undefined)
+    // No Workspace to steer toward: report the empty stage rather than
+    // inventing a Session the user did not ask for.
+    if (target === undefined) return false
+    const remaining = mostRecentSession(
+      target,
+      this.workspaces.list.getSnapshot(),
+      this.sessions.list.getSnapshot(),
+      removedId,
+    )
+    if (remaining !== undefined) {
+      this.sessions.open(remaining)
+      return true
+    }
+    // No engaged Session remains in the target Workspace: connect (reuse the
+    // blank placeholder or create a fresh one) and open it.
+    void this.connectWorkspace(target).then(
+      (sessionId) => { this.sessions.open(sessionId) },
+      (reason: unknown) => { console.warn(`session ${action} navigation failed:`, reason) },
+    )
+    return true
   }
 
   async pickDirectory(): Promise<string | null> {
@@ -212,21 +289,28 @@ class UiWorkspaceService extends Service implements UiWorkspace {
         initial = 'done'
         return
       }
+      // Bootstrap restores the most recently updated Session of the most
+      // recently active Workspace WITHOUT creating one: a cold start with no
+      // Session stays on the empty state, and a cleared selection (deleted or
+      // archived current Session) after reload never invents a Session the
+      // user did not ask for.
+      const recent = mostRecentSession(target, workspace, sessions)
+      if (recent === undefined) {
+        initial = 'done'
+        return
+      }
       initial = 'connecting'
-      void this.connectWorkspace(target).then(
-        (sessionId) => {
-          if (this.lifetime.signal.aborted) return
-          if (this.sessions.list.getSnapshot().current === undefined) {
-            this.sessions.open(sessionId)
-          }
+      // Guard against a stale snapshot: by the time the microtask settles,
+      // the stage may already hold a selection.
+      queueMicrotask(() => {
+        if (this.lifetime.signal.aborted || initial !== 'connecting') return
+        if (this.sessions.list.getSnapshot().current !== undefined) {
           initial = 'done'
-        },
-        (reason: unknown) => {
-          if (this.lifetime.signal.aborted) return
-          initial = 'waiting'
-          console.warn('initial workspace selection failed:', reason)
-        },
-      )
+          return
+        }
+        this.sessions.open(recent)
+        initial = 'done'
+      })
     }
     const disposeWorkspaces = this.workspaces.list.subscribe(reconcile)
     const disposeSessions = this.sessions.list.subscribe(reconcile)
@@ -266,6 +350,40 @@ function recentWorkspace(
     if (selected === undefined || latest > selectedTime) {
       selected = workspace.workspaceId
       selectedTime = latest
+    }
+  }
+  return selected
+}
+
+/**
+ * The most recently updated engaged Session of one Workspace, excluding one
+ * optional id (the just-deleted Session, whose summary may still be visible in
+ * a stale snapshot). Blank placeholders are skipped: they carry no content and
+ * the connect path reuses them on demand.
+ * @param workspaceId - target Workspace.
+ * @param workspaces - Workspace snapshot (membership authority).
+ * @param sessions - Session list snapshot.
+ * @param exclude - Session id to ignore (usually the deleted one).
+ * @returns the recency-winner id, or undefined when none remains.
+ */
+function mostRecentSession(
+  workspaceId: WorkspaceId,
+  workspaces: WorkspaceSnapshot,
+  sessions: SessionListState,
+  exclude?: SessionId,
+): SessionId | undefined {
+  const workspace = workspaces.items.find(item => item.workspaceId === workspaceId)
+  if (workspace === undefined) return undefined
+  const archived = new Set(workspaces.archivedSessionIds)
+  let selected: SessionId | undefined
+  let selectedTime = Number.NEGATIVE_INFINITY
+  for (const id of workspace.sessionIds) {
+    if (id === exclude || archived.has(id)) continue
+    const session = sessions.byId[id]
+    if (session === undefined || session.blank) continue
+    if (selected === undefined || session.updatedAt > selectedTime) {
+      selected = id
+      selectedTime = session.updatedAt
     }
   }
   return selected

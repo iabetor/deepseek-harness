@@ -356,7 +356,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'archiveSession(sessionId: SessionId): Promise<void>',
-        description: 'Archive a Session and clear it when it is the current selection.',
+        description: 'Archive a Session and, when it is the current selection, steer the stage onward by the same rule that follows a deletion.',
         parameters: [{ name: 'sessionId', description: 'Session to archive.' }],
       },
       {

@@ -453,6 +453,20 @@ export class ClientSessions implements ISessions {
   }
 
   /**
+   * Physically destroy a Session on the Host. On success the local row is
+   * cleared immediately (the host's `api-session/removed` event re-confirms).
+   * @param sessionId - Session to delete.
+   * @throws when the delete fails (including an active-session rejection).
+   */
+  async delete(sessionId: SessionId): Promise<void> {
+    const result = await this.manager.delete(sessionId)
+    if (!result.ok) {
+      throw new Error(`session delete failed: ${result.error.code}: ${result.error.message}`)
+    }
+    this.projectList()
+  }
+
+  /**
    * Resolve an Agent-scoped context view (use-and-discard).
    * @param id - session id (the agent identity — 1:1 same axis).
    * @returns scoped ctx, or undefined for a session neither listed nor already scoped.

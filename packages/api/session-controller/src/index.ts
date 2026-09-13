@@ -33,6 +33,8 @@ import type {
   SessionControlFrame,
   SessionCreateRequest,
   SessionCreateValue,
+  SessionDeleteRequest,
+  SessionDeleteValue,
   SessionFollowFrame,
   SessionFollowRequest,
   SessionForkRequest,
@@ -92,6 +94,7 @@ export class SessionController extends TypertRemoteService {
     'fileUploads',
     'llm',
     'sessions',
+    'sessionPersistence',
     'sessionProjections',
     'sessionQuery',
     'typert',
@@ -148,6 +151,13 @@ export class SessionController extends TypertRemoteService {
     })
     ctx.on('session/disposed', (session) => {
       ctx.emit('api-session/removed', session.id)
+    })
+    // Physical destruction (session.delete) removes a Session from every
+    // list, so broadcast the same removal clients already expect from a live
+    // session teardown. Cold and archived Sessions have no live session, so
+    // this is the only signal that clears their rows.
+    ctx.on('sessionPersistence:deleted', (sessionId) => {
+      ctx.emit('api-session/removed', sessionId)
     })
     ctx.on('agent/status', ({ agent, status }) => {
       ctx.emit('api-session/status', agent.id, status === 'running')
@@ -335,6 +345,18 @@ export class SessionController extends TypertRemoteService {
   @Remote('fork')
   fork(request: SessionForkRequest): Promise<SessionForkValue> {
     return this.commands.fork(request)
+  }
+
+  /**
+   * Physically destroy one Session's durable log. A live Session is rejected by
+   * the command's active guard; the registry archive set is cleared first so an
+   * archived Session leaves no dangling reference after deletion.
+   * @param request - Session identity to destroy.
+   * @returns the deletion receipt.
+   */
+  @Remote('delete')
+  delete(request: SessionDeleteRequest): Promise<SessionDeleteValue> {
+    return this.commands.delete(request)
   }
 
   /**

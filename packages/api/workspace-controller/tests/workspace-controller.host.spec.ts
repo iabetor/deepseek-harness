@@ -222,6 +222,29 @@ describe('WorkspaceController commands', () => {
     await expect(controller.archiveSession({ sessionId: SessionId('unknown') }))
       .rejects.toMatchObject({ code: 'session/not-found' })
   })
+
+  it('unarchives a session and is a no-op for a non-archived id', async () => {
+    const { controller, ctx, root } = await harness()
+    const workspace = await controller.create({ path: stageDir(root, 'first') })
+    const session = ctx.sessions.create(SessionId('session-one'), {
+      meta: { cwd: workspace.workspace.path },
+    })
+    const registered = ctx.workspaceRegistry.get(workspace.workspace.workspaceId)
+    if (registered === undefined) throw new Error('fixture Workspace disappeared')
+    await registered.attachSession(session.id)
+
+    // Archiving then unarchiving restores an empty archive set.
+    await expect(controller.archiveSession({ sessionId: session.id }))
+      .resolves.toEqual({ archivedSessionIds: [session.id] })
+    await expect(controller.unarchiveSession({ sessionId: session.id }))
+      .resolves.toEqual({ archivedSessionIds: [] })
+
+    // Unarchiving a non-archived id is a no-op (idempotent).
+    await expect(controller.unarchiveSession({ sessionId: session.id }))
+      .resolves.toEqual({ archivedSessionIds: [] })
+    await expect(controller.unarchiveSession({ sessionId: SessionId('never-archived') }))
+      .resolves.toEqual({ archivedSessionIds: [] })
+  })
 })
 
 describe('WorkspaceController follow', () => {

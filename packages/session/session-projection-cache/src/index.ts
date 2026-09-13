@@ -51,6 +51,15 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionProjectionCache: SessionProjectionCache
   }
+  interface Events {
+    /**
+     * A Session's durable log was physically destroyed (session.delete);
+     * remove its derived checkpoint so no ghost record outlives the log.
+     * @mode emit
+     * @param sessionId - destroyed Session identity.
+     */
+    'sessionPersistence:deleted'(sessionId: SessionId): void
+  }
 }
 
 /**
@@ -336,6 +345,18 @@ export class SessionProjectionCache extends Service {
       void this.flushSoft(session, 'detach')
       this.markClean(session)
       this.dirty.delete(session)
+    })
+
+    // Physical destruction (session.delete): the durable log is gone, so any
+    // checkpoint left behind would be an unreachable ghost (the cold list can
+    // never read it, but it would survive until the domain is rewritten).
+    // Remove the record now, fail-soft like every other cache write.
+    this.ctx.on('sessionPersistence:deleted', (sessionId: SessionId) => {
+      void this.requireTable().delete(sessionId).catch((error: unknown) => {
+        this.ctx.logger.warn(
+          `session projection cache: deleting checkpoint for destroyed session "${sessionId}" failed (ghost may remain): ${String(error)}`,
+        )
+      })
     })
 
     // With the plugin (their sessions outlive the cache): clear pending

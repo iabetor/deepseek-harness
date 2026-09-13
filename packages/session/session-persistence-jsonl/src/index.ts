@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto'
 import {
   SessionPersistence, SessionPersistenceRevision, SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
-  SessionAlreadyExistsError, SessionPersistenceNotFoundError,
+  SessionAlreadyExistsError, SessionAlreadyOwnedError, SessionPersistenceNotFoundError,
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
@@ -487,6 +487,39 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     signal?.throwIfAborted()
     return snapshots
+  }
+
+  /**
+   * Physically destroy a session's durable log: remove its per-session
+   * directory (the `session.jsonl[.zstd]` artifact and any stray temp links).
+   * Idempotent: an unknown id (no located artifact) resolves without error.
+   * Callers must ensure the session is not live before destruction.
+   * @param id - the persisted session whose durable log must be destroyed.
+   * @param options - optional cancellation.
+   */
+  async destroy(id: SessionId, options?: SessionPersistenceStatOptions): Promise<void> {
+    const signal = options?.signal
+    signal?.throwIfAborted()
+    await this.ensureRootEncoding()
+    const selected = await this.findLog(id, signal)
+    if (selected === undefined) return
+    const dir = dirname(selected.sourcePath)
+    // A pending creator handle would resurrect the artifact on its next flush;
+    // refuse rather than silently racing it.
+    if (this.tracker.hasPending(id)) {
+      throw new SessionAlreadyOwnedError(id)
+    }
+    await rm(dir, { recursive: true, force: true })
+    this.coldLogMemo.delete(id)
+    // fsync the project directory so the removal is crash-durable (POSIX only;
+    // Windows dispatches durable directory updates through its own namespace).
+    if (process.platform !== 'win32') {
+      try {
+        await this.syncDirPosix(dirname(dir))
+      } catch {
+        // Directory fsync is best-effort durability; the log is already removed.
+      }
+    }
   }
 
   // --- handle-facing storage internals (package-private via the handle class below) ---
@@ -971,6 +1004,7 @@ class JsonlSessionPersistence extends SessionPersistence {
       decoder.close()
     }
   }
+
 
   private async listArtifacts(signal?: AbortSignal): Promise<Array<{ header: SessionHeader; path: string }>> {
     signal?.throwIfAborted()

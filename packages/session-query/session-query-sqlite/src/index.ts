@@ -73,6 +73,15 @@ declare module '@deepseek-ai/cordis' {
     /** Launcher-owned absolute path to this process's disposable derived query index. */
     launcherSessionQueryPath?: string
   }
+  interface Events {
+    /**
+     * A Session's durable log was physically destroyed; remove its derived
+     * documents from the query index.
+     * @param sessionId - destroyed Session identity.
+     * @mode emit
+     */
+    'sessionPersistence:deleted'(sessionId: SessionId): void
+  }
 }
 
 /** Default result page size. */
@@ -257,6 +266,21 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     ctx.effect(() => {
       return () => this._optionalPersistenceFiber.dispose()
     }, 'sessionQuerySqlite.optionalPersistence')
+    // Immediate index purge: a physical session destroy (`session.delete`) drops
+    // the durable log out-of-band, so the derived FTS index would otherwise keep
+    // serving the deleted Session until the next search-time reconcile. Drop its
+    // rows now when the index is open; a closed/unopened index has nothing to
+    // purge and reconciles cleanly on first search anyway.
+    const onDeleted = ctx.on('sessionPersistence:deleted', (sessionId: SessionId) => {
+      if (this._ready === undefined || this._closed) return
+      try {
+        this._deleteSession('persisted', sessionId)
+        this._deleteSession('live', sessionId)
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`session-query-sqlite: failed to purge deleted session "${sessionId}": ${String(error)}`)
+      }
+    })
+    ctx.effect(() => () => onDeleted(), 'sessionQuerySqlite.deletePurge')
     ctx.effect(() => async () => this.close(), 'sessionQuerySqlite.close')
   }
 

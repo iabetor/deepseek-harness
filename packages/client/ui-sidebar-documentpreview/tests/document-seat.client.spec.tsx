@@ -84,6 +84,8 @@ async function boot() {
             data-renderer-path={resource.value?.absolutePath} data-renderer-version={resource.value?.version}
           >
             {props.content.kind === 'text' ? props.content.text : new TextDecoder().decode(props.content.data)}
+            {/* A body that wrote to the file asks the owner to re-read it. */}
+            <button type="button" data-renderer-reload onClick={() => { props.reload() }} />
           </div>
         )
       },
@@ -170,5 +172,30 @@ describe('document extension seat', () => {
     await act(async () => { await remove!() })
     await waitFor(() => { expect(h.view.container.querySelector('[data-document-markdown]')).not.toBeNull() })
     expect(h.read).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a document body re-read the file it changed, without the manual reload bar', async () => {
+    // 渲染器自己改了文件(编辑器 / 改动叠加层接受或撤销一个 hunk)后,壳持有的
+    // 内容已经过时。渲染器调 props.reload() 直接走壳自己的重读路径:页面与
+    // "文件已更新"提示条一并落定,不用等读者去点。
+    const h = await boot()
+    h.register('reload-reader', 'text-pages', 'extension')
+    h.open('notes.md')
+    await waitFor(() => { expect(h.view.container.querySelector('[data-renderer="reload-reader"]')?.textContent).toBe('first\nsecond') })
+    expect(h.read).toHaveBeenCalledTimes(1)
+    // 磁盘在渲染器写入后变了,壳观察到新版本 → 亮出提示条。
+    h.read.mockImplementation(async (_sessionId, _path, range) => ({
+      ok: true,
+      value: { absolutePath: '/host/notes', version: 'v2', bytes: 18, offset: range.offset ?? 1, text: 'rewritten', lines: 1, eof: true },
+    }))
+    await act(async () => { h.rt.ctx.resources.source('dsh-resource://file/session/documents/notes.md') })
+    // 渲染器报告自己写过了 → 重读,内容与版本一起前进。
+    await act(async () => {
+      fireEvent.click(h.view.container.querySelector('[data-renderer-reload]')!)
+    })
+    await waitFor(() => { expect(h.read).toHaveBeenCalledTimes(2) })
+    expect(h.read).toHaveBeenLastCalledWith(SESSION, 'notes.md', { offset: 1 }, expect.any(AbortSignal))
+    await waitFor(() => { expect(h.view.container.querySelector('[data-renderer="reload-reader"]')?.textContent).toBe('rewritten') })
+    expect(h.view.container.querySelector('[data-textpreview-changed]')).toBeNull()
   })
 })

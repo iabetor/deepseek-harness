@@ -371,13 +371,17 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  * @param props.onFork - fork a session at its last completed turn.
  * @param props.onArchive - archive a session by id.
  * @param props.onReveal - scroll this row into view after search navigation, then acknowledge it.
+ * @param props.onUnarchive - restore an archived session to grouping surfaces.
+ * @param props.onDelete - physically destroy a session's durable log.
+ * @param props.archived - the row renders in the archived section (menu swaps to restore/destroy).
  * @param props.drag - optional draggable-row wiring.
  * @param props.flat - omit the empty status slot in the hierarchy-free flat list.
  * @param props.t - the browser root's locale seat.
  * @returns the session row.
  */
 export function SessionNodeItem({
-  node, currentId, now, onOpen, onRename, onFork, onArchive, onReveal, drag, flat = false, t,
+  node, currentId, now, onOpen, onRename, onFork, onArchive, onReveal, onUnarchive,
+  onDelete, archived = false, drag, flat = false, t,
 }: {
   node: SessionNode
   currentId: string | undefined
@@ -391,6 +395,12 @@ export function SessionNodeItem({
   onArchive: (id: SessionNode['id']) => void
   /** Scroll this row into view after search navigation, then acknowledge it. */
   onReveal?: (() => void) | undefined
+  /** Restore an archived session to grouping surfaces (archived-section row menu action). */
+  onUnarchive?: ((id: SessionNode['id']) => void) | undefined
+  /** Physically destroy this session's durable log (archived-section row menu action). */
+  onDelete?: ((id: SessionNode['id']) => void) | undefined
+  /** The row is rendered in the archived section: menu shows restore/destroy instead. */
+  archived?: boolean | undefined
   /** Present only on draggable rows (workspace-group sessions outside search). */
   drag?: RowDragProps | undefined
   /** The row is rendered without a parent Workspace header. */
@@ -412,13 +422,25 @@ export function SessionNodeItem({
   }, [onReveal])
   // Archive hides the row through the registry-global archive set and never
   // touches the session log, so it is not styled as destructive and needs no
-  // confirmation dialog.
-  const sessionMenuItems = [
-    { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutline16 /> },
-    // 20-native glyph in the menu's 16px icon slot (Menu.module.css .itemIcon).
-    { id: 'archive', label: t('menu.archiveSession'), icon: <IconArchiveOutline20 size={16} /> },
-  ]
+  // confirmation dialog. The archived section's rows expose restore and
+  // destroy instead — deletion is destructive and physical, so the UI gates it
+  // behind a confirmation dialog owned by the browser.
+  const sessionMenuItems = archived
+    ? [
+      { id: 'unarchive', label: t('menu.unarchiveSession'), icon: <IconArchiveOutline20 size={16} /> },
+      { id: 'delete', label: t('menu.deleteSession'), icon: <IconTrashOutline16 /> },
+    ]
+    : [
+      { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
+      { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutline16 /> },
+      // 20-native glyph in the menu's 16px icon slot (Menu.module.css .itemIcon).
+      { id: 'archive', label: t('menu.archiveSession'), icon: <IconArchiveOutline20 size={16} /> },
+      // A live (running) session cannot be physically destroyed — the host
+      // rejects deletion of any active session, so the destructive action is
+      // hidden rather than shown-then-rejected. Ended-but-unarchived sessions
+      // expose delete here; archived sessions carry it in the archived section.
+      ...(node.running ? [] : [{ id: 'delete', label: t('menu.deleteSession'), icon: <IconTrashOutline16 /> }]),
+    ]
   // Figma session cell: pad 8, status slot 16, then a 4px title gap.
   const ownRow = (
     <div
@@ -482,6 +504,8 @@ export function SessionNodeItem({
               if (id === 'rename') onRename(node.id, row.title)
               if (id === 'fork') onFork(node.id)
               if (id === 'archive') onArchive(node.id)
+              if (id === 'unarchive') onUnarchive?.(node.id)
+              if (id === 'delete') onDelete?.(node.id)
             }}
             portal
             closeOnPointerLeave

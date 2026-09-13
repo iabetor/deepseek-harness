@@ -196,6 +196,20 @@ export abstract class SessionPersistence extends Service {
    * @returns one snapshot per stored session.
    */
   abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+  /**
+   * Physically destroy a session's entire durable log: its header metadata and
+   * every stored event, irrecoverably. Callers must ensure the session is not
+   * live (no running Agent and no in-memory Session entry) before deletion, so
+   * a concurrent append cannot race the removal — this method only removes
+   * stored bytes and never stops or detaches a live session.
+   *
+   * Idempotent: destroying an unknown or already-removed session resolves
+   * without error, so callers may destroy without first probing presence.
+   * @param id - the persisted session whose durable log must be destroyed.
+   * @param options - optional cancellation.
+   */
+  abstract destroy(id: SessionId, options?: SessionPersistenceStatOptions): Promise<void>
 }
 
 export default SessionPersistence

@@ -194,6 +194,13 @@ class TestPersistence extends SessionPersistence {
     await TestPersistence.listEffect?.(options?.signal)
     return snapshots
   }
+
+  async destroy(id: SessionId): Promise<void> {
+    // Physically remove so query reconcile cannot re-insert the row after a
+    // sessionPersistence:deleted purge (mirrors a real backend destroy).
+    TestPersistence.entries.delete(id)
+    TestPersistence.revisions.delete(id)
+  }
 }
 
 async function liveContext(config: ConstructorParameters<typeof SqliteSessionQueryEngine>[1] = { path: ':memory:' }): Promise<Context> {
@@ -356,6 +363,29 @@ describe('SQLite session search', () => {
       })
     await expect(ctx.sessionQuery.searchSessions({ query: 'AI' }))
       .resolves.toMatchObject({ items: [{ header: session.header, live: true, persisted: false }] })
+  })
+
+  it('purges the FTS index immediately when a session is physically deleted', async () => {
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+    const session = ctx.sessions.create(SessionId('purge-me'))
+    session.append(
+      'user/message',
+      createUserMessage({ content: [{ type: 'text', text: 'needle token' }], source: { kind: 'user' } }),
+      { surfaceOp: 'append' },
+    )
+    // Index the session so its rows exist in the derived FTS table.
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ header: { id: session.id } }] })
+
+    // Host destroys the durable log (and expels the live entry), then broadcasts
+    // the deletion; the index must drop its rows without waiting for reconcile.
+    ctx.sessions.expel(session.id)
+    await ctx.sessionPersistence.destroy(session.id)
+    ctx.emit('sessionPersistence:deleted', session.id)
+
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .resolves.toEqual({ items: [] })
   })
 
   it('excludes assistant reasoning while indexing visible answer text', async () => {

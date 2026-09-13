@@ -21,14 +21,12 @@ import { apply, inject } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 usePinnedBrowserLanguages('zh-CN')
 
 beforeEach(() => {
-  vi.stubEnv('DSH_CLIENT_COMMIT_HASH', 'abc1234')
-  vi.stubEnv('DSH_CLIENT_GIT_DIRTY', 'true')
-  vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3-rc.4')
+  // The shell chrome snapshots pin the plain wordmark fallback; no build
+  // metadata participates (the local-build version badge was removed).
 })
 
 afterEach(() => {
   cleanup()
-  vi.unstubAllEnvs()
 })
 
 /**

@@ -622,10 +622,17 @@ describe('session reference discovery and preparation', () => {
   it('matches candidate metadata and titles before ranking by cwd', async () => {
     const ctx = await harness()
     const target = ctx.sessions.create(SessionId('target'), { meta: { cwd: '/same', createdAt: 10 } })
-    ctx.sessions.create(SessionId('other'), { meta: { cwd: '/else', createdAt: 40 } })
-    ctx.sessions.create(SessionId('none'), { meta: { createdAt: 30 } })
-    ctx.sessions.create(SessionId('same'), { meta: { cwd: '/same', createdAt: 20 } })
+    // Every candidate holds a real turn so the blank filter does not remove
+    // it: this test covers metadata/title ranking, not blankness.
+    const engage = (session: Session): void => { session.append('turn/start', { turn: 1 }) }
+    const other = ctx.sessions.create(SessionId('other'), { meta: { cwd: '/else', createdAt: 40 } })
+    engage(other)
+    const none = ctx.sessions.create(SessionId('none'), { meta: { createdAt: 30 } })
+    engage(none)
+    const same = ctx.sessions.create(SessionId('same'), { meta: { cwd: '/same', createdAt: 20 } })
+    engage(same)
     const sameLater = ctx.sessions.create(SessionId('same-later'), { meta: { cwd: '/same', createdAt: 25 } })
+    engage(sameLater)
     sameLater.append('session/title', {
       title: 'Latest title',
       messageSeqs: [],
@@ -667,6 +674,9 @@ describe('session reference discovery and preparation', () => {
     const ctx = await harness()
     const target = ctx.sessions.create(SessionId('target'), { meta: { cwd: '/same' } })
     const live = ctx.sessions.create(SessionId('live'), { meta: { cwd: '/same' } })
+    // A real turn keeps the candidate visible to the blank filter; this test
+    // covers title reads, not blankness.
+    live.append('turn/start', { turn: 1 })
     live.append('session/title', { title: 'Old title', messageSeqs: [], source: { kind: 'fallback' } })
     // The durable checkpoint is write-behind, so it still holds the old value.
     withProjectionCache(ctx, { live: 'Old title' })
@@ -733,6 +743,8 @@ describe('session reference discovery and preparation', () => {
     await ctx.plugin(SessionReferenceResolver)
     const target = ctx.sessions.create(SessionId('target'), { meta: { cwd: '/same' } })
     const other = ctx.sessions.create(SessionId('other'), { meta: { cwd: '/same' } })
+    // A real turn keeps the candidate visible to the blank filter.
+    other.append('turn/start', { turn: 1 })
     other.append('session/title', { title: 'Unreadable', messageSeqs: [], source: { kind: 'fallback' } })
 
     await expect(ctx.sessionReferenceResolver.listCandidates(fakeAgent(target))).resolves.toEqual([
@@ -743,7 +755,9 @@ describe('session reference discovery and preparation', () => {
   it('serves the Remote face with the configured limit and canonical mentions', async () => {
     const ctx = await harness()
     const target = ctx.sessions.create(SessionId('target'), { meta: { cwd: '/same', createdAt: 10 } })
-    ctx.sessions.create(SessionId('source]'), { meta: { cwd: '/same', createdAt: 20 } })
+    const source = ctx.sessions.create(SessionId('source]'), { meta: { cwd: '/same', createdAt: 20 } })
+    // A real turn keeps the candidate visible to the blank filter.
+    source.append('turn/start', { turn: 1 })
     const candidates = await ctx.sessionReferenceResolver.remoteExportCandidates(
       fakeAgent(target),
       '',
@@ -838,8 +852,10 @@ describe('session reference discovery and preparation', () => {
   it('still matches an unlabeled session on its own metadata', async () => {
     const ctx = await harness()
     const target = ctx.sessions.create(SessionId('target'))
-    // No cwd, no title event: nothing but the id identifies it.
+    // No cwd, no title event: nothing but the id identifies it. A real turn
+    // keeps it visible to the blank filter.
     const source = ctx.sessions.create(SessionId('source'))
+    source.append('turn/start', { turn: 1 })
 
     await expect(ctx.sessionReferenceResolver.listCandidates(fakeAgent(target), 'source')).resolves.toEqual([
       { sessionId: source.id, label: source.id, sameWorkspace: false, createdAt: source.header.createdAt },
@@ -1199,6 +1215,64 @@ describe('session reference discovery and preparation', () => {
     expect(JSON.stringify(before)).toContain('use @source')
     expect(JSON.stringify(before)).not.toContain('later source mutation')
     expect(Session.create(SessionId('replayed-target'), target.snapshotEvents()).deriveMessages()).toEqual(before)
+  })
+
+  it('excludes a physically deleted session from candidate listing', async () => {
+    const ctx = await harness()
+    const target = ctx.sessions.create(SessionId('target'), { meta: { cwd: '/same' } })
+    const victim = ctx.sessions.create(SessionId('victim'), { meta: { cwd: '/same', createdAt: 20 } })
+    // A real conversation (turn/start) makes the victim a non-blank candidate;
+    // the blank filter must not be what removes it here — deletion is.
+    victim.append('turn/start', { turn: 1 })
+    withProjectionCache(ctx, {})
+
+    // Before deletion the victim is a discoverable candidate.
+    await expect(ctx.sessionReferenceResolver.listCandidates(fakeAgent(target)))
+      .resolves.toContainEqual(expect.objectContaining({ sessionId: victim.id }))
+
+    // The host destroys the durable log and broadcasts the deletion.
+    ctx.emit('sessionPersistence:deleted', victim.id)
+
+    const after = await ctx.sessionReferenceResolver.listCandidates(fakeAgent(target))
+    expect(after.find(c => c.sessionId === victim.id)).toBeUndefined()
+    // No other sessions remain discoverable besides the target itself.
+    expect(after).toEqual([])
+  })
+
+  it('excludes blank Sessions from candidate listing without reading logs', async () => {
+    const ctx = await harness()
+    const target = ctx.sessions.create(SessionId('target'), { meta: { cwd: '/same' } })
+    // Blank live Session: created but never engaged (no turn/start).
+    ctx.sessions.create(SessionId('blank-live'), { meta: { cwd: '/same' } })
+    // Engaged live Session: must stay discoverable.
+    const engaged = ctx.sessions.create(SessionId('engaged'), { meta: { cwd: '/same' } })
+    engaged.append('turn/start', { turn: 1 })
+    // Blank cold Session: the durable projection cache proves blankness.
+    const blankCold = { id: SessionId('blank-cold'), createdAt: 10, cwd: '/same' }
+    // Engaged cold Session: cache proves non-blank.
+    const engagedCold = { id: SessionId('engaged-cold'), createdAt: 20, cwd: '/same' }
+    withProjectionCache(ctx, {})
+    // The mock cache serves `sessionListMetadata` for the two cold records.
+    const cache = ctx.get('sessionProjectionCache') as unknown as {
+      cachedSnapshot: (meta: { id: SessionId }) => { values: Record<string, unknown> } | undefined
+    }
+    const original = cache.cachedSnapshot.bind(cache)
+    cache.cachedSnapshot = (meta) => {
+      if (meta.id === blankCold.id) return { asOfSeq: 0, values: { sessionListMetadata: { blank: true } } }
+      if (meta.id === engagedCold.id) return { asOfSeq: 0, values: { sessionListMetadata: { blank: false } } }
+      return original(meta)
+    }
+    vi.spyOn(ctx.sessionQuery, 'listSessions').mockResolvedValue([
+      { header: engaged.header, live: true, persisted: true },
+      { header: blankCold, live: false, persisted: true },
+      { header: engagedCold, live: false, persisted: true },
+    ] as never)
+
+    const candidates = await ctx.sessionReferenceResolver.listCandidates(fakeAgent(target))
+    expect(candidates.map(c => c.sessionId)).toEqual([engaged.id, engagedCold.id])
+    expect(candidates.map(c => c.sessionId)).not.toContain(blankCold.id)
+    expect(candidates.map(c => c.sessionId)).not.toContain(SessionId('blank-live'))
+    vi.restoreAllMocks()
   })
 
   it('rejects direct invalid configuration before service publication', async () => {
