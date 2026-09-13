@@ -408,9 +408,108 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+/**
+ * Physically destroy a session's entire durable log: its header metadata and
+ * every stored event, irrecoverably. Callers must ensure the session is not
+ * live (no running Agent and no in-memory Session entry) before deletion, so
+ * a concurrent append cannot race the removal — this method only removes
+ * stored bytes and never stops or detaches a live session.
+ *
+ * Idempotent: destroying an unknown or already-removed session resolves
+ * without error, so callers may destroy without first probing presence.
+ * @param id - the persisted session whose durable log must be destroyed.
+ * @param options - optional cancellation.
+ */
+abstract destroy(id: SessionId, options?: SessionPersistenceStatOptions): Promise<void>
 ```
 
 Types: [SessionId](core.md)
 
 Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="sessionpersistencedeleted-events"></a>
+
+### `sessionPersistence:deleted/*` events
+
+<a id="sessionpersistencedeleted--emit"></a>
+
+#### `sessionPersistence:deleted` — emit
+
+A Session's durable log was physically destroyed (session.delete). Cold and archived Sessions have no live registry entry, so this is the only signal that clears their client rows.
+
+```ts cordis-catalog
+/**
+ * A Session's durable log was physically destroyed (session.delete). Cold
+ * and archived Sessions have no live registry entry, so this is the only
+ * signal that clears their client rows.
+ * @mode emit
+ * @param sessionId - destroyed Session identity.
+ */
+'sessionPersistence:deleted'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/api/session-controller/src/types.ts`](../../packages/api/session-controller/src/types.ts)
+
+<a id="sessionpersistencedeleted--emit"></a>
+
+#### `sessionPersistence:deleted` — emit
+
+A Session's durable log was physically destroyed (session.delete); remove its derived checkpoint so no ghost record outlives the log.
+
+```ts cordis-catalog
+/**
+ * A Session's durable log was physically destroyed (session.delete);
+ * remove its derived checkpoint so no ghost record outlives the log.
+ * @mode emit
+ * @param sessionId - destroyed Session identity.
+ */
+'sessionPersistence:deleted'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/session/session-projection-cache/src/index.ts`](../../packages/session/session-projection-cache/src/index.ts)
+
+<a id="sessionpersistencedeleted--emit"></a>
+
+#### `sessionPersistence:deleted` — emit
+
+A Session's durable log was physically destroyed; remove its derived documents from the query index.
+
+```ts cordis-catalog
+/**
+ * A Session's durable log was physically destroyed; remove its derived
+ * documents from the query index.
+ * @param sessionId - destroyed Session identity.
+ * @mode emit
+ */
+'sessionPersistence:deleted'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/session-query/session-query-sqlite/src/index.ts`](../../packages/session-query/session-query-sqlite/src/index.ts)
+
+<a id="sessionpersistencedeleted--emit"></a>
+
+#### `sessionPersistence:deleted` — emit
+
+A Session's durable log was physically destroyed; drop any reference candidates and snapshot data that pointed at it.
+
+```ts cordis-catalog
+/**
+ * A Session's durable log was physically destroyed; drop any reference
+ * candidates and snapshot data that pointed at it.
+ * @param sessionId - destroyed Session identity.
+ * @mode emit
+ */
+'sessionPersistence:deleted'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/context/session-reference/src/index.ts`](../../packages/context/session-reference/src/index.ts)
 <!-- END GENERATED cordis-surface -->

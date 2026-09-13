@@ -36,6 +36,7 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   const injected = (): ArchivedSessionsSectionInjected => ({
     unarchive: sessionId => ctx.uiWorkspace.unarchiveSession(sessionId),
+    delete: sessionId => ctx.uiWorkspace.deleteSession(sessionId),
   })
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({

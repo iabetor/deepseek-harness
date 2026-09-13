@@ -134,6 +134,11 @@ export type WorkspaceBrowserInjected = {
    * session clears the selection into the New Session view state.
    */
   archiveSession: (sessionId: SessionId) => Promise<void>
+  /**
+   * Physically destroy a Session's durable log. Refused while the Session is
+   * active; callers should stop the running Agent first.
+   */
+  deleteSession: (sessionId: SessionId) => Promise<void>
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
 }

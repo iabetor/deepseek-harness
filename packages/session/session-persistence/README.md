@@ -42,6 +42,7 @@ const reader = await ctx.sessionPersistence.open(id, 'read')   // observe withou
 const snap = await ctx.sessionPersistence.stat(id)             // header + revision (+ eventCount / sizeBytes) without a log read
 const all = await ctx.sessionPersistence.list()                // one snapshot per visible stored session
 await ctx.sessionPersistence.flush()                           // backend-wide durability barrier over every active write handle
+await ctx.sessionPersistence.destroy(id)                         // physically destroy a stored session (idempotent)
 ```
 
 Service-level `flush()` drains every active write handle's routed events and materializes its session, exactly as each handle's own `flush` would; failures aggregate per session as an `AggregateError` without abandoning the sweep, and a handle closed mid-sweep counts as flushed because close itself drains durably.
@@ -55,6 +56,7 @@ Every log read and write flows through the returned `SessionHandle`; there are n
 ### The live write path and shutdown drain
 
 The backend owns the live write path: it installs the session listeners once and routes every published session's events by id to that session's active write handle — `session/event` copies into a bounded internal batching window, `session/flush` is the immediate durability and error-observation barrier, and `session/disposed` runs the final drain and closes the handle. A published session without an active write handle persists nothing. A background write failure retains its events in order, pauses the automatic path, and is logged; the next explicit flush retries and rejects loudly. `close()` itself drains the routed buffer through the still-open storage before releasing ownership, so backend teardown's close sweep keeps application shutdown lossless even though root-fiber disposal runs fibers' disposers concurrently.
+
 
 ### Resuming and crash recovery
 

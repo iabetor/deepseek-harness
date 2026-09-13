@@ -2670,7 +2670,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Content and viewing inputs shared by document bodies and nested PDF presentation. */\nexport interface DocumentBodyOwner {\n  /** Original file address, also readable through the standard useResource hook. */\n  readonly resourceAddress: string\n  /** Ordinary file content or a renderer-owned loading request; text accumulates until eof. */\n  readonly content: DocumentContent\n  /** The document toolbar\'s current wrapping preference. */\n  readonly wrap: boolean\n  /** Report a renderer-owned scrollport; passing `null` restores the shared body as the owner. */\n  readonly scrollportRef: RefCallback<HTMLElement>\n}',
+      '/** Content and viewing inputs shared by document bodies and nested PDF presentation. */\nexport interface DocumentBodyOwner {\n  /** Original file address, also readable through the standard useResource hook. */\n  readonly resourceAddress: string\n  /** Ordinary file content or a renderer-owned loading request; text accumulates until eof. */\n  readonly content: DocumentContent\n  /** The document toolbar\'s current wrapping preference. */\n  readonly wrap: boolean\n  /** Report a renderer-owned scrollport; passing `null` restores the shared body as the owner. */\n  readonly scrollportRef: RefCallback<HTMLElement>\n  /**\n   * Re-read this document from its first line after the renderer itself\n   * changed the file.\n   *\n   * A renderer that writes to the file it displays (an editor, or a\n   * change-review overlay applying or reverting a hunk) then holds content\n   * the Host has already superseded. The owner learns that only from the\n   * version on a later metadata frame, and answers it with the manual\n   * "file changed, showing previous content" bar — right for a change the\n   * reader did not make, needless friction for one the renderer just made\n   * and can report itself. Calling thi /* …truncated — full shape in source */',
     ],
     ownerPropsReferences: [
       'DocumentContent',
@@ -2707,7 +2707,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar.right.tab.document\', () => ctx.slots.register(\n      { name: \'sidebar.right.tab.document\', key: \'<one key the owner dispatches>\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-sidebar-documentpreview/src/client/document/contract.ts:45',
+    source: 'packages/client/ui-sidebar-documentpreview/src/client/document/contract.ts:62',
   },
   {
     key: 'sidebar.right.tab.document.office.pdf',
@@ -2724,7 +2724,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Content and viewing inputs shared by document bodies and nested PDF presentation. */\nexport interface DocumentBodyOwner {\n  /** Original file address, also readable through the standard useResource hook. */\n  readonly resourceAddress: string\n  /** Ordinary file content or a renderer-owned loading request; text accumulates until eof. */\n  readonly content: DocumentContent\n  /** The document toolbar\'s current wrapping preference. */\n  readonly wrap: boolean\n  /** Report a renderer-owned scrollport; passing `null` restores the shared body as the owner. */\n  readonly scrollportRef: RefCallback<HTMLElement>\n}',
+      '/** Content and viewing inputs shared by document bodies and nested PDF presentation. */\nexport interface DocumentBodyOwner {\n  /** Original file address, also readable through the standard useResource hook. */\n  readonly resourceAddress: string\n  /** Ordinary file content or a renderer-owned loading request; text accumulates until eof. */\n  readonly content: DocumentContent\n  /** The document toolbar\'s current wrapping preference. */\n  readonly wrap: boolean\n  /** Report a renderer-owned scrollport; passing `null` restores the shared body as the owner. */\n  readonly scrollportRef: RefCallback<HTMLElement>\n  /**\n   * Re-read this document from its first line after the renderer itself\n   * changed the file.\n   *\n   * A renderer that writes to the file it displays (an editor, or a\n   * change-review overlay applying or reverting a hunk) then holds content\n   * the Host has already superseded. The owner learns that only from the\n   * version on a later metadata frame, and answers it with the manual\n   * "file changed, showing previous content" bar — right for a change the\n   * reader did not make, needless friction for one the renderer just made\n   * and can report itself. Calling thi /* …truncated — full shape in source */',
     ],
     ownerPropsReferences: [
       'DocumentContent',

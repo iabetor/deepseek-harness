@@ -81,3 +81,19 @@
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
 }
+
+.actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.delete:not(:disabled) {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.error {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+}

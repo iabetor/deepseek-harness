@@ -1,11 +1,12 @@
 /**
  * Archived-session Settings page: the registry-global archive set joined with
  * the loaded Session summaries, newest archive first, filtered by one search
- * box, with one Unarchive action per row. An archive entry whose Session is
- * gone has no row and no action; the set itself stays host-owned.
+ * box, with one Unarchive action per row and one confirmed Delete. An archive
+ * entry whose Session is gone has no row and no action; the set itself stays
+ * host-owned.
  */
-import { useMemo, useState, type ReactNode } from 'react'
-import { Button, IconSearchOutline16, relativeTime } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Button, IconSearchOutline16, Modal, relativeTime } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import css from './ArchivedSessionsSection.module.css'
@@ -17,6 +18,11 @@ export interface ArchivedSessionsSectionInjected {
    * @param sessionId - Session to unarchive.
    */
   unarchive: (sessionId: SessionId) => Promise<void>
+  /**
+   * Physically destroy one archived Session's durable log.
+   * @param sessionId - Session to delete.
+   */
+  delete: (sessionId: SessionId) => Promise<void>
 }
 
 /** Full component props assembled by the Settings slot renderer. */
@@ -55,13 +61,46 @@ function matches(row: ArchivedRow, normalizedQuery: string): boolean {
  * @returns the settings page element tree.
  */
 export function ArchivedSessionsSection(props: ArchivedSessionsSectionProps): ReactNode {
-  const { t, unarchive, useSessions, useWorkspaces } = props
+  const { t, unarchive, delete: destroy, useSessions, useWorkspaces } = props
   const sessions = useSessions(state => state)
   const workspaces = useWorkspaces(state => state.items)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
   const [query, setQuery] = useState('')
   const ungrouped = t('ungrouped')
   const summaries = sessions.byId
+
+  // Deletion is destructive and physical, so it is confirmed first and the
+  // dialog outlives the row: a committed removal drops the row from `rows` on
+  // the next projection, and closing on that unmount would tear down the
+  // in-flight confirmation state instead of reporting the outcome.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: SessionId; title: string } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteCommittedId, setDeleteCommittedId] = useState<SessionId | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  useEffect(() => {
+    if (deleteCommittedId === null || summaries[deleteCommittedId] !== undefined) return
+    setDeleting(false)
+    setDeleteCommittedId(null)
+    setDeleteTarget(null)
+  }, [deleteCommittedId, summaries])
+  const closeDelete = () => {
+    if (deleting) return
+    setDeleteTarget(null)
+    setDeleteError(null)
+  }
+  const confirmDelete = () => {
+    /* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
+    if (deleting || deleteTarget === null) return
+    setDeleting(true)
+    setDeleteCommittedId(null)
+    setDeleteError(null)
+    destroy(deleteTarget.id).then(() => {
+      setDeleteCommittedId(deleteTarget.id)
+    }).catch((reason: unknown) => {
+      setDeleting(false)
+      setDeleteError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
 
   // Archive order is oldest first; the page lists the most recently archived
   // Session first. A member with no loaded summary is not addressable here.
@@ -113,22 +152,61 @@ export function ArchivedSessionsSection(props: ArchivedSessionsSectionProps): Re
                   {[row.workspace, timeLabel(row.updatedAt, now, t)].join(' · ')}
                 </span>
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                aria-label={t('unarchiveNamed', { title: row.title })}
-                onClick={() => {
-                  unarchive(row.id).catch((reason: unknown) => {
-                    console.warn('session unarchive rejected:', reason)
-                  })
-                }}
-              >
-                {t('unarchive')}
-              </Button>
+              <span className={css.actions}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label={t('unarchiveNamed', { title: row.title })}
+                  onClick={() => {
+                    unarchive(row.id).catch((reason: unknown) => {
+                      console.warn('session unarchive rejected:', reason)
+                    })
+                  }}
+                >
+                  {t('unarchive')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={css.delete}
+                  aria-label={t('deleteNamed', { title: row.title })}
+                  onClick={() => {
+                    setDeleteTarget({ id: row.id, title: row.title })
+                    setDeleteError(null)
+                  }}
+                >
+                  {t('delete')}
+                </Button>
+              </span>
             </li>
           ))}
         </ul>
       ) : null}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={closeDelete}
+        closeLabel={t('close')}
+        title={t('deleteTitle')}
+        {...deleteTarget === null
+          ? {}
+          : { description: t('deleteDesc', { name: deleteTarget.title }) }}
+        footer={(
+          <>
+            <Button variant="outline" disabled={deleting} onClick={closeDelete}>{t('cancel')}</Button>
+            <Button
+              variant="outline"
+              className={css.delete}
+              disabled={deleting}
+              onClick={confirmDelete}
+            >
+              {t('deleteConfirm')}
+            </Button>
+          </>
+        )}
+      >
+        {deleting && <div className={css.status} role="status">{t('deletePending')}</div>}
+        {deleteError !== null && <div className={css.error} role="alert">{deleteError}</div>}
+      </Modal>
     </div>
   )
 }

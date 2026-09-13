@@ -52,10 +52,12 @@ function props(options: {
   sessions: SessionListState
   workspaces: WorkspaceSnapshot
   unarchive?: (sessionId: SessionId) => Promise<void>
+  delete?: (sessionId: SessionId) => Promise<void>
 }): ArchivedSessionsSectionProps {
   return {
     t,
     unarchive: options.unarchive ?? (async () => {}),
+    delete: options.delete ?? (async () => {}),
     useSessions: ((select: (state: SessionListState) => unknown) => select(options.sessions)),
     useWorkspaces: ((select: (state: WorkspaceSnapshot) => unknown) => select(options.workspaces)),
   } as unknown as ArchivedSessionsSectionProps
@@ -77,11 +79,13 @@ describe('ArchivedSessionsSection', () => {
     render(<ArchivedSessionsSection {...twoRows()} />)
 
     expect(screen.getAllByRole('listitem').map(row => row.textContent)).toEqual([
-      'Newer sessionProject · nowUnarchive',
-      'Older sessionProject · 2dUnarchive',
+      'Newer sessionProject · nowUnarchiveDelete session',
+      'Older sessionProject · 2dUnarchiveDelete session',
     ])
     expect(screen.getAllByRole('button', { name: /^Unarchive/ }).map(button => button.getAttribute('aria-label')))
       .toEqual(['Unarchive Newer session', 'Unarchive Older session'])
+    expect(screen.getAllByRole('button', { name: /^Permanently delete/ }).map(button => button.getAttribute('aria-label')))
+      .toEqual(['Permanently delete Newer session', 'Permanently delete Older session'])
   })
 
   it('labels a session outside every Workspace and hides an entry whose session is gone', () => {
@@ -154,5 +158,42 @@ describe('ArchivedSessionsSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Unarchive Older session' }))
     await waitFor(() => { expect(warn).toHaveBeenCalledWith('session unarchive rejected:', failure) })
     warn.mockRestore()
+  })
+
+  it('destroys a session only after the confirmation dialog is accepted', async () => {
+    const destroy = vi.fn(async () => {})
+    render(<ArchivedSessionsSection {...twoRows()} delete={destroy} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete Newer session' }))
+    expect(destroy).not.toHaveBeenCalled()
+    expect(screen.getByText('This permanently destroys the session log for “Newer session”. It cannot be recovered, and the session is removed from the archive.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+    await waitFor(() => { expect(destroy).toHaveBeenCalledWith('newer') })
+    // The dialog waits for the committed projection to drop the row, so the
+    // confirmation stays up while the removal is still unobserved.
+    expect(screen.getByText('Deleting…')).toBeTruthy()
+  })
+
+  it('cancels a pending destroy without calling the host', () => {
+    const destroy = vi.fn(async () => {})
+    render(<ArchivedSessionsSection {...twoRows()} delete={destroy} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete Older session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(destroy).not.toHaveBeenCalled()
+    expect(screen.queryByText('Deleting…')).toBeNull()
+  })
+
+  it('reports a rejected destroy and leaves the row in place', async () => {
+    const failure = new Error('session active')
+    render(<ArchivedSessionsSection {...twoRows()} delete={async () => { throw failure }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete Newer session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('session active') })
+    expect(screen.getByText('Newer session')).toBeTruthy()
   })
 })

@@ -161,6 +161,10 @@ class TestPersistence extends SessionPersistence {
     TestPersistence.afterList?.()
     return Promise.resolve(snapshots)
   }
+
+  async destroy(_id: SessionIdType): Promise<void> {
+    // Test trace store keeps its entries; deletion is not exercised by query tests.
+  }
 }
 
 async function liveContext(config: ConstructorParameters<typeof TestSessionQueryEngine>[1] = {}): Promise<Context> {

@@ -200,6 +200,8 @@ type SessionTreeProps = Pick<
   onSessionRename: (sessionId: SessionNode['id'], currentTitle: string) => void
   /** Archive a session (row menu action; the row disappears on the state echo). */
   onSessionArchive: (sessionId: SessionNode['id']) => void
+  /** Open the browser-owned destructive delete-confirmation dialog for a session. */
+  onSessionDelete: (sessionId: SessionNode['id'], title: string) => void
   /** One Session chosen from search that must be exposed and scrolled into view. */
   revealSessionId?: SessionId | undefined
   /** Acknowledge that the chosen Session row has been revealed. */
@@ -211,7 +213,7 @@ function SessionTree({
   list, useSessionStatus, startSession, open, forkSession, workspaces, ungroupedSessionIds,
   archivedSessionIds,
   workspaceReady, usePanelInfo,
-  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
+  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onSessionDelete,
   insertWorkspaceBefore,
   nestWorkspaces, groupExpansion, setGroupExpanded,
   setSessionOrder, home, t,
@@ -522,6 +524,7 @@ function SessionTree({
               onRename={onSessionRename}
               onFork={forkSession}
               onArchive={onSessionArchive}
+              onDelete={(deletedId) => { onSessionDelete(deletedId, node.title) }}
               onReveal={node.id === revealSessionId && group.key === revealGroup
                 ? () => { onSessionRevealed(node.id) }
                 : undefined}
@@ -567,6 +570,7 @@ function SessionTree({
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
   list, sessionIds, useSessionStatus, open, forkSession, onSessionRename, onSessionArchive,
+  onSessionDelete,
   usePanelInfo, setSessionOrder,
   revealSessionId, onSessionRevealed, t,
 }: Pick<
@@ -576,6 +580,7 @@ function FlatList({
   | 'forkSession'
   | 'onSessionRename'
   | 'onSessionArchive'
+  | 'onSessionDelete'
   | 'usePanelInfo'
   | 'setSessionOrder'
   | 'revealSessionId'
@@ -635,6 +640,7 @@ function FlatList({
               onRename={onSessionRename}
               onFork={forkSession}
               onArchive={onSessionArchive}
+              onDelete={(deletedId) => { onSessionDelete(deletedId, node.title) }}
               onReveal={node.id === revealSessionId
                 ? () => { onSessionRevealed(node.id) }
                 : undefined}
@@ -778,6 +784,7 @@ export function WorkspaceBrowser({
   deleteWorkspace,
   insertWorkspaceBefore,
   archiveSession,
+  deleteSession,
   createWorkspace,
   searchSessions,
   searchResultLimit,
@@ -1109,6 +1116,48 @@ export function WorkspaceBrowser({
     })
   }
 
+  // Both ended-but-unarchived and archived rows open the same destructive
+  // session confirmation, so one handler owns the target for either entry.
+  const openDeleteSessionDialog = (sessionId: SessionNode['id'], title: string) => {
+    setDeleteSessionTarget({ sessionId, title })
+    setDeleteSessionError(null)
+  }
+
+  // Session deletion is destructive and physical (the durable log is gone for
+  // good), so it is gated behind a confirmation dialog, mirroring the Workspace
+  // delete flow. The dialog lives here (not on the row) so a committed removal
+  // can unmount the row without tearing down in-flight confirmation state.
+  const [deleteSessionTarget, setDeleteSessionTarget] = useState<{ sessionId: SessionNode['id']; title: string } | null>(null)
+  const [deletingSession, setDeletingSession] = useState(false)
+  const [deleteSessionCommittedId, setDeleteSessionCommittedId] = useState<SessionNode['id'] | null>(null)
+  const [deleteSessionError, setDeleteSessionError] = useState<string | null>(null)
+  const deleteSessionById = useSessions(s => s.byId)
+  useEffect(() => {
+    if (deleteSessionCommittedId === null
+      || deleteSessionById[deleteSessionCommittedId] !== undefined) return
+    setDeletingSession(false)
+    setDeleteSessionCommittedId(null)
+    setDeleteSessionTarget(null)
+  }, [deleteSessionCommittedId, deleteSessionById])
+  const closeDeleteSession = () => {
+    if (deletingSession) return
+    setDeleteSessionTarget(null)
+    setDeleteSessionError(null)
+  }
+  const confirmDeleteSession = () => {
+    /* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
+    if (deletingSession || deleteSessionTarget === null) return
+    setDeletingSession(true)
+    setDeleteSessionCommittedId(null)
+    setDeleteSessionError(null)
+    deleteSession(deleteSessionTarget.sessionId).then(() => {
+      setDeleteSessionCommittedId(deleteSessionTarget.sessionId)
+    }).catch((reason: unknown) => {
+      setDeletingSession(false)
+      setDeleteSessionError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
   return (
     <div className={clsx(css.root, !wide && css.rail)}>
       <div className={css.sectionHeader}>
@@ -1267,6 +1316,7 @@ export function WorkspaceBrowser({
                 useSessionStatus={useSessionStatus}
                 open={open} forkSession={forkSession}
                 onSessionRename={onSessionRename} onSessionArchive={onSessionArchive}
+                onSessionDelete={openDeleteSessionDialog}
                 setSessionOrder={saveSessionOrder}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
@@ -1305,6 +1355,7 @@ export function WorkspaceBrowser({
                   setDeleteTarget({ workspaceId, title })
                   setDeleteError(null)
                 }}
+                onSessionDelete={openDeleteSessionDialog}
               />
             ))}
       </div>
@@ -1399,6 +1450,31 @@ export function WorkspaceBrowser({
       >
         {deleting && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
         {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
+      </Modal>
+      <Modal
+        open={deleteSessionTarget !== null}
+        onClose={closeDeleteSession}
+        closeLabel={t('close')}
+        title={t('delete.session')}
+        {...deleteSessionTarget === null
+          ? {}
+          : { description: t('delete.session.desc', { name: deleteSessionTarget.title }) }}
+        footer={(
+          <>
+            <Button variant="outline" disabled={deletingSession} onClick={closeDeleteSession}>{t('cancel')}</Button>
+            <Button
+              variant="outline"
+              className={css.deleteAction}
+              disabled={deletingSession}
+              onClick={confirmDeleteSession}
+            >
+              {t('delete.session')}
+            </Button>
+          </>
+        )}
+      >
+        {deletingSession && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
+        {deleteSessionError !== null && <div className={css.renameError} role="alert">{deleteSessionError}</div>}
       </Modal>
     </div>
   )
