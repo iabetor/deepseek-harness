@@ -61,8 +61,33 @@ describe('deriveStats', () => {
     // tokenUsage projection); decodeTokens is a throughput input, not a
     // billed total.
     expect(Object.keys(stats).sort()).toEqual(
-      ['decodeMs', 'decodeTokens', 'llmMs', 'steps', 'toolMs', 'ttftMs', 'ttftSteps', 'turns'],
+      ['decodeMs', 'decodeTokens', 'llmMs', 'steps', 'toolMs', 'tools', 'ttftMs', 'ttftSteps', 'turns'],
     )
+  })
+
+  it('ranks the window tool breakdown by summed wall time and skips a result with no call head', () => {
+    const tool = (seq: number, callId: string, name: string, callTime: number): ToolResultNode => ({
+      kind: 'tool-result', seq, time: callTime + 100, callId, call: { name, argsRaw: '{}' }, callTime,
+      content: [], isError: false, subCalls: [],
+    })
+    const headless: ToolResultNode = {
+      kind: 'tool-result', seq: 9, time: 5_000, callId: 'lost', call: null, callTime: 4_000, content: [],
+      isError: false, subCalls: [],
+    }
+    const stats = deriveStats([
+      assistant(1, 1),
+      tool(2, 'a', 'read', 1_000),
+      tool(3, 'b', 'bash', 1_200),
+      tool(4, 'c', 'read', 1_300),
+      headless,
+    ])
+    // bash 100ms vs read 100 + 100: read leads after its second pair, and the
+    // headless result (1000ms) counts toward toolMs but names no tool.
+    expect(stats.tools).toEqual([
+      { name: 'read', calls: 2, ms: 200 },
+      { name: 'bash', calls: 1, ms: 100 },
+    ])
+    expect(stats.toolMs).toBe(1_300)
   })
 
   it('ignores tool results with no call time', () => {
@@ -73,6 +98,7 @@ describe('deriveStats', () => {
     const stats = deriveStats([tool, assistant(1, 1)])
     expect(stats.steps).toBe(1)
     expect(stats.toolMs).toBe(0)
+    expect(stats.tools).toEqual([])
   })
 
   it('sums LLM wall time from assistant timing and tool wall time from call/result pairs', () => {
@@ -91,6 +117,8 @@ describe('deriveStats', () => {
     const stats = deriveStats([timed, untimed, tool])
     expect(stats.llmMs).toBe(2_500)
     expect(stats.toolMs).toBe(3_000)
+    // The result's call head is outside the window, so the total has no named entry.
+    expect(stats.tools).toEqual([])
   })
 
   it('sums ttft per recorded step and decode throughput inputs per usage-carrying step', () => {
@@ -129,9 +157,11 @@ describe('StatsPills', () => {
   const USAGE = { uncachedInputTokens: 10, outputTokens: 5, cacheReadTokens: 90, cacheWriteTokens: 0 }
 
   /** A whole-log sessionStats value: zeros plus overrides. */
-  function sessionStats(overrides: Record<string, number>): Record<string, number> {
+  function sessionStats(
+    overrides: Record<string, number | readonly { name: string; calls: number; ms: number }[]>,
+  ): Record<string, unknown> {
     return {
-      turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0,
+      turns: 0, steps: 0, llmMs: 0, toolMs: 0, tools: [], ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0,
       ...overrides,
     }
   }
@@ -236,8 +266,48 @@ describe('StatsPills', () => {
     expect(details.textContent).not.toContain('Tool time')
     expect(details.textContent).toContain('Avg time to first token (TTFT)0.8s')
     expect(details.textContent).toContain('Tokens per second (TPS)20 tok/s')
+    // Window fallback names only calls whose head is in-window; none here.
+    expect(dialog.querySelector('[data-session-stats-tools]')).toBeNull()
     // Token accounting lives on the usage pill's own dialog, not here.
     expect(dialog.textContent).not.toContain('Token usage')
+  })
+
+  it('renders the ranked per-tool breakdown under the time figures', () => {
+    const { source } = makeSource({ nodes: [assistant(1, 1)] })
+    const view = render(<StatsPills {...props(source, {
+      tokenUsage: USAGE,
+      sessionStats: sessionStats({
+        turns: 1, steps: 1, toolMs: 4_300, ttftMs: 400, ttftSteps: 1,
+        tools: [
+          { name: 'bash', calls: 1, ms: 3_000 },
+          { name: 'read', calls: 2, ms: 1_100 },
+          { name: 'grep', calls: 1, ms: 200 },
+        ],
+      }),
+    })} />)
+    fireEvent.click(view.getAllByRole('button')[0]!)
+    const dialog = view.getByRole('dialog')
+    // Headline tool total stays on the dl row; its split is a ranked list.
+    expect(dialog.querySelector('[data-session-stats-details]')?.textContent).toContain('Tool time4.3s')
+    const breakdown = dialog.querySelector('[data-session-stats-tools]') as HTMLElement
+    expect(breakdown).toBeTruthy()
+    expect(dialog.textContent).toContain('Tool time breakdown')
+    const rows = [...breakdown.querySelectorAll('li')]
+    expect(rows.map(row => row.textContent)).toEqual(['bash1 call·3s', 'read2 calls·1.1s', 'grep1 call·0.2s'])
+  })
+
+  it('localizes the breakdown labels and leaves tool names verbatim', () => {
+    const { source } = makeSource({ nodes: [assistant(1, 1)] })
+    const view = render(<StatsPills {...props(source, {
+      tokenUsage: USAGE,
+      sessionStats: sessionStats({
+        turns: 1, steps: 1, toolMs: 500, tools: [{ name: 'read', calls: 1, ms: 500 }],
+      }),
+    })} t={t} />)
+    fireEvent.click(view.getAllByRole('button')[0]!)
+    const dialog = view.getByRole('dialog')
+    expect(dialog.textContent).toContain('工具用时明细')
+    expect(dialog.textContent).toContain('read1 次调用·0.5秒')
   })
 
   it('click-opens the token-usage dialog carrying the headline total and exact buckets', () => {

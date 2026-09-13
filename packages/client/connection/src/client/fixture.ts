@@ -1161,15 +1161,26 @@ function sessionStatsOf(log: readonly SessionEvent[]): {
   steps: number
   llmMs: number
   toolMs: number
+  tools: readonly { name: string; calls: number; ms: number }[]
   ttftMs: number
   ttftSteps: number
   decodeMs: number
   decodeTokens: number
 } {
-  const value = { turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 }
+  const value = {
+    turns: 0,
+    steps: 0,
+    llmMs: 0,
+    toolMs: 0,
+    tools: [] as readonly { name: string; calls: number; ms: number }[],
+    ttftMs: 0,
+    ttftSteps: 0,
+    decodeMs: 0,
+    decodeTokens: 0,
+  }
   let lastTurn: number | null = null
   let openStep: { turn: number; step: number; startTime: number; firstTokenTime: number | null } | null = null
-  const pendingCalls = new Map<string, number>()
+  const pendingCalls = new Map<string, { time: number; name: string }>()
   for (const event of log) {
     switch (event.type) {
       case 'step/start':
@@ -1201,14 +1212,16 @@ function sessionStatsOf(log: readonly SessionEvent[]): {
         break
       }
       case 'tool/call':
-        pendingCalls.set(event.data.callId, event.time)
+        pendingCalls.set(event.data.callId, { time: event.time, name: event.data.name })
         break
       case 'tool/result': {
         const callId = event.data.message.source.callId
         const dispatched = pendingCalls.get(callId)
         if (dispatched === undefined) break
         pendingCalls.delete(callId)
-        value.toolMs += Math.max(0, event.time - dispatched)
+        const delta = Math.max(0, event.time - dispatched.time)
+        value.toolMs += delta
+        value.tools = fixtureRankToolTotal(value.tools, dispatched.name, delta)
         break
       }
       case 'step/end':
@@ -1228,6 +1241,24 @@ function sessionStatsOf(log: readonly SessionEvent[]): {
   }
   return value
 }
+
+/** Fixture parallel of the per-tool ranking: descending `ms`, first settlement first on ties. */
+/* jscpd:ignore-start -- the browser fixture mirrors session-stats' fold by design (it cannot import the
+   host projection package), exactly as sessionStatsOf above mirrors the rest of that unit. */
+function fixtureRankToolTotal(
+  tools: readonly { name: string; calls: number; ms: number }[],
+  name: string,
+  delta: number,
+): readonly { name: string; calls: number; ms: number }[] {
+  const existing = tools.find(tool => tool.name === name)
+  const next = existing === undefined
+    ? [...tools, { name, calls: 1, ms: delta }]
+    : tools.map(tool => tool.name === name
+      ? { name, calls: tool.calls + 1, ms: tool.ms + delta }
+      : tool)
+  return next.toSorted((left, right) => right.ms - left.ms)
+}
+/* jscpd:ignore-end */
 
 interface FixtureRequestContext {
   provider: string

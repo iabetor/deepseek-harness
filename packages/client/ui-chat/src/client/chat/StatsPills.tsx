@@ -11,7 +11,7 @@ import { IconDatabaseOutline16, IconGaugeOutline16 } from '@deepseek-ai/dsh-clie
 import type { UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: merges the sessionStats key into SessionProjectionMap for useProjection.
-import type {} from '@deepseek-ai/dsh-session-stats/client'
+import type { SessionStatsToolTotal } from '@deepseek-ai/dsh-session-stats/client'
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
@@ -29,6 +29,8 @@ interface WindowStats {
   llmMs: number
   /** Summed tool wall time (tool/call → tool/result); 0 when no pair is in-window. */
   toolMs: number
+  /** Per-tool-name split of `toolMs`, ranked the same way the projection ranks it. */
+  tools: readonly SessionStatsToolTotal[]
   /** Summed first-token latency over `ttftSteps`; 0 when no step records it. */
   ttftMs: number
   /** Steps carrying a recorded TTFT. */
@@ -37,6 +39,29 @@ interface WindowStats {
   decodeMs: number
   /** Summed output tokens over the same decode-timed steps. */
   decodeTokens: number
+}
+
+/**
+ * Add one settled call to the ranked window breakdown, keeping descending `ms`
+ * order. Nodes fold in window order, so the stable sort leaves equal totals in
+ * first-settlement order — the ranking the projection serves.
+ * @param tools - the current ranked breakdown.
+ * @param name - the call's tool name; a result whose call head left the window is skipped by the caller.
+ * @param delta - the pair's wall time in ms.
+ * @returns the next ranked breakdown.
+ */
+function rankToolTotal(
+  tools: readonly SessionStatsToolTotal[],
+  name: string,
+  delta: number,
+): readonly SessionStatsToolTotal[] {
+  const existing = tools.find(tool => tool.name === name)
+  const next = existing === undefined
+    ? [...tools, { name, calls: 1, ms: delta }]
+    : tools.map(tool => tool.name === name
+      ? { name, calls: tool.calls + 1, ms: tool.ms + delta }
+      : tool)
+  return next.toSorted((left, right) => right.ms - left.ms)
 }
 
 /**
@@ -56,13 +81,20 @@ export function deriveStats(nodes: ChatSnapshot['legacy']['nodes']): WindowStats
   let steps = 0
   let llmMs = 0
   let toolMs = 0
+  let tools: readonly SessionStatsToolTotal[] = []
   let ttftMs = 0
   let ttftSteps = 0
   let decodeMs = 0
   let decodeTokens = 0
   for (const node of nodes) {
     if (node.kind === 'tool-result') {
-      if (node.callTime !== null) toolMs += Math.max(0, node.time - node.callTime)
+      if (node.callTime === null) continue
+      const delta = Math.max(0, node.time - node.callTime)
+      toolMs += delta
+      // A result whose call head is outside the window carries no name, so it
+      // contributes to the total alone — the same split the projection makes
+      // between matched pairs and everything else.
+      if (node.call !== null) tools = rankToolTotal(tools, node.call.name, delta)
       continue
     }
     if (node.kind !== 'assistant') continue
@@ -81,7 +113,7 @@ export function deriveStats(nodes: ChatSnapshot['legacy']['nodes']): WindowStats
       decodeTokens += reading.outputTokens
     }
   }
-  return { turns: turns.size, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens }
+  return { turns: turns.size, steps, llmMs, toolMs, tools, ttftMs, ttftSteps, decodeMs, decodeTokens }
 }
 
 /**
@@ -226,6 +258,28 @@ function TimePill({ stats, t, dialog }: {
               </>
             )}
           </dl>
+          {/* Ranked per-tool split of the tool time above. Every tool name is
+              logged data and renders verbatim; only the counts and durations
+              are localized. */}
+          {stats.tools.length > 0 && (
+            <div className={css.breakdown}>
+              <div className={css.breakdownTitle}>{t('stats.dialog.toolBreakdown')}</div>
+              <ol className={css.breakdownList} data-session-stats-tools>
+                {stats.tools.map(tool => (
+                  <li key={tool.name} className={css.breakdownRow}>
+                    <span className={css.breakdownName}>{tool.name}</span>
+                    <span className={css.breakdownValue}>
+                      {t(tool.calls === 1 ? 'stats.dialog.toolCalls.one' : 'stats.dialog.toolCalls.other', {
+                        count: tool.calls,
+                      })}
+                      <span className={css.sep} aria-hidden>·</span>
+                      {formatDuration(tool.ms, t)}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
         </div>,
         document.body,
       )}

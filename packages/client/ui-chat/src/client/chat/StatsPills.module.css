@@ -66,3 +66,46 @@ button.pill[aria-expanded='true'] {
   color: var(--dsw-alias-separator-primary);
   margin: 0 6px;
 }
+
+/* Ranked per-tool split under the time figures in the stats dialog. The
+   section keeps the dialog's own type tier; only the leader row reads at the
+   secondary label color, the rest sit at tertiary like the dl rows. */
+.breakdown {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.breakdownTitle {
+  margin-bottom: 6px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.breakdownList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.breakdownRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.breakdownName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breakdownValue {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

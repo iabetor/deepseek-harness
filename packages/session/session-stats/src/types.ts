@@ -13,11 +13,25 @@
 export {}
 
 /**
+ * One tool name's whole-log usage: how many matched `tool/call` → `tool/result`
+ * pairs settled under that name and their summed wall time. The name is the
+ * verbatim `tool/call` payload value, never a localized label.
+ */
+export interface SessionStatsToolTotal {
+  /** The `tool/call` event's `name` field, verbatim. */
+  readonly name: string
+  /** Matched call→result pairs recorded under this name. */
+  readonly calls: number
+  /** Summed wall time over those pairs, ms. */
+  readonly ms: number
+}
+
+/**
  * Whole-log conversation figures, independent of how much history a client
  * has paged in. Counts and wall times all fold from the complete durable log;
- * every field is 0 until its first contributing event lands. Field names
- * mirror the client window fold so an assembly without this unit can fall
- * back to it wholesale.
+ * every field is 0 (or `tools` empty) until its first contributing event
+ * lands. Field names mirror the client window fold so an assembly without
+ * this unit can fall back to it wholesale.
  */
 export interface SessionStatsProjection {
   /** Distinct turns carrying at least one closed step (`step/end`); rejected or empty turns are uncounted. */
@@ -28,6 +42,14 @@ export interface SessionStatsProjection {
   llmMs: number
   /** Summed tool wall time over `tool/call` → `tool/result` pairs matched by callId. */
   toolMs: number
+  /**
+   * Per-tool-name breakdown of `toolMs`: one entry per tool name that settled
+   * at least one matched pair, sorted by descending `ms`. Equal totals order
+   * deterministically from the settlement sequence, so an unfolding replay
+   * over the same log reproduces the array. Names whose calls resolved
+   * through `turn/end` pruning never appear.
+   */
+  tools: readonly SessionStatsToolTotal[]
   /** Summed first-token latency (`step/start` → first non-empty delta chunk) over `ttftSteps`. */
   ttftMs: number
   /** Steps carrying a recorded first token. */
