@@ -52,7 +52,7 @@ function appendEmptyAssistantMessage(session: Session, turn: number, step: numbe
 /** The all-zero projection value plus overrides, for exact fold expectations. */
 function totals(overrides: Partial<SessionStatsProjection> = {}): SessionStatsProjection {
   return {
-    turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0,
+    turns: 0, steps: 0, llmMs: 0, toolMs: 0, tools: [], ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0,
     ...overrides,
   }
 }
@@ -294,7 +294,9 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
       at(5_000, 'tool/result', result('ghost')),
       at(5_100, 'step/end', { turn: 1, step: 1 }),
     ])
-    expect(paired).toEqual(totals({ turns: 1, steps: 1, toolMs: 3_500 }))
+    expect(paired).toEqual(totals({
+      turns: 1, steps: 1, toolMs: 3_500, tools: [{ name: 'read', calls: 2, ms: 3_500 }],
+    }))
     // An unresolved call is dropped at turn/end; a later result cannot pair.
     const pruned = fold([
       at(1_000, 'step/start', { turn: 1, step: 1 }),
@@ -324,7 +326,76 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
       at(1_100, 'tool/call', { turn: 1, step: 1, callId: 'constructor', name: 'read', arguments: '{}' }),
       at(1_600, 'tool/result', result('constructor')),
       at(2_000, 'step/end', { turn: 1, step: 1 }),
-    ])).toEqual(totals({ turns: 1, steps: 1, toolMs: 500 }))
+    ])).toEqual(totals({
+      turns: 1, steps: 1, toolMs: 500, tools: [{ name: 'read', calls: 1, ms: 500 }],
+    }))
+  })
+
+  it('ranks the per-tool breakdown by descending wall time and keeps totals equal to its sum', () => {
+    const result = (callId: string): unknown =>
+      ({ turn: 1, step: 1, message: { source: { kind: 'tool', callId } } })
+    const stats = fold([
+      at(1_000, 'step/start', { turn: 1, step: 1 }),
+      // bash settles first with the largest single delta, then read twice with
+      // smaller ones: rank follows summed time, not first appearance.
+      at(1_100, 'tool/call', { turn: 1, step: 1, callId: 's1', name: 'bash', arguments: '{}' }),
+      at(4_100, 'tool/result', result('s1')),
+      at(4_200, 'tool/call', { turn: 1, step: 1, callId: 'r1', name: 'read', arguments: '{}' }),
+      at(4_500, 'tool/result', result('r1')),
+      at(4_600, 'tool/call', { turn: 1, step: 1, callId: 'r2', name: 'read', arguments: '{}' }),
+      at(5_400, 'tool/result', result('r2')),
+      at(5_500, 'tool/call', { turn: 1, step: 1, callId: 'g1', name: 'grep', arguments: '{}' }),
+      at(5_700, 'tool/result', result('g1')),
+      at(6_000, 'step/end', { turn: 1, step: 1 }),
+    ])
+    expect(stats.tools).toEqual([
+      { name: 'bash', calls: 1, ms: 3_000 },
+      { name: 'read', calls: 2, ms: 1_100 },
+      { name: 'grep', calls: 1, ms: 200 },
+    ])
+    expect(stats.toolMs).toBe(4_300)
+    expect(stats.tools.reduce((sum, tool) => sum + tool.ms, 0)).toBe(stats.toolMs)
+  })
+
+  it('keeps first-settlement order among equal totals and stays replay-stable', () => {
+    const result = (callId: string): unknown =>
+      ({ turn: 1, step: 1, message: { source: { kind: 'tool', callId } } })
+    const events = [
+      at(1_000, 'step/start', { turn: 1, step: 1 }),
+      at(1_100, 'tool/call', { turn: 1, step: 1, callId: 'first', name: 'alpha', arguments: '{}' }),
+      at(1_600, 'tool/result', result('first')),
+      // Equal 500ms totals: `alpha` settled first, so it stays ahead.
+      at(1_700, 'tool/call', { turn: 1, step: 1, callId: 'second', name: 'beta', arguments: '{}' }),
+      at(2_200, 'tool/result', result('second')),
+      at(2_300, 'step/end', { turn: 1, step: 1 }),
+    ]
+    const expected = [{ name: 'alpha', calls: 1, ms: 500 }, { name: 'beta', calls: 1, ms: 500 }]
+    expect(fold(events).tools).toEqual(expected)
+    // Replay by log seq reproduces the same array (a fresh fold is a replay).
+    expect(fold(events).tools).toEqual(expected)
+  })
+
+  it('re-sorts an existing entry upward when a later pair overtakes its rank', () => {
+    const result = (callId: string): unknown =>
+      ({ turn: 1, step: 1, message: { source: { kind: 'tool', callId } } })
+    const stats = fold([
+      at(1_000, 'step/start', { turn: 1, step: 1 }),
+      at(1_000, 'tool/call', { turn: 1, step: 1, callId: 'a', name: 'read', arguments: '{}' }),
+      at(1_000, 'tool/call', { turn: 1, step: 1, callId: 'b', name: 'bash', arguments: '{}' }),
+      // bash's 450ms leads read's 300ms; read's second pair then pushes read
+      // past bash, so the existing entry must move up its rank.
+      at(1_300, 'tool/result', result('a')),
+      at(1_450, 'tool/result', result('b')),
+      at(1_500, 'tool/call', { turn: 1, step: 1, callId: 'c', name: 'read', arguments: '{}' }),
+      at(1_800, 'tool/result', result('c')),
+      at(2_000, 'step/end', { turn: 1, step: 1 }),
+    ])
+    expect(stats.tools).toEqual([
+      { name: 'read', calls: 2, ms: 600 },
+      { name: 'bash', calls: 1, ms: 450 },
+    ])
+    // Both figures agree after the reorder: the ranked list still sums to toolMs.
+    expect(stats.toolMs).toBe(1_050)
   })
 
   it('skips decode for an invalid usage report and ignores a duplicate assembled message', () => {
@@ -358,5 +429,20 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
       messageAt(1_000),
       at(2_100, 'step/end', { turn: 1, step: 1 }),
     ])).toEqual(totals({ turns: 1, steps: 1 }))
+  })
+
+  it('rejects a wire breakdown that is not ranked by descending ms', () => {
+    // The view schema is the client boundary: a mis-ranked list would render
+    // out of order, so it fails validation instead of reaching the UI.
+    const schema = sessionStatsProjectionDefinition.wire.viewSchema
+    const base = { turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 }
+    expect(schema.safeParse({
+      ...base,
+      tools: [{ name: 'a', calls: 1, ms: 5 }, { name: 'b', calls: 1, ms: 5 }],
+    }).success).toBe(true)
+    expect(schema.safeParse({
+      ...base,
+      tools: [{ name: 'a', calls: 1, ms: 1 }, { name: 'b', calls: 1, ms: 5 }],
+    }).success).toBe(false)
   })
 })
