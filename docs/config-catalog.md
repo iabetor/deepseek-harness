@@ -2586,6 +2586,12 @@ Source: [`packages/e2b/subprocess-e2b/src/index.ts:26`](../packages/e2b/subproce
 export interface Config {
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
+  /**
+   * Include the harness-owned execution discipline in the
+   * `harness:operating-guidance` section (default true). A deployment that owns
+   * a byte-exact prompt turns it off.
+   */
+  includeOperatingGuidance?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
   includeRuntimeContext?: boolean
   /**
@@ -2607,7 +2613,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/core/system-prompt/src/index.ts:242`](../packages/core/system-prompt/src/index.ts)
+Source: [`packages/core/system-prompt/src/index.ts:265`](../packages/core/system-prompt/src/index.ts)
 
 <a id="deepseek-aidsh-terminal-bash"></a>
 

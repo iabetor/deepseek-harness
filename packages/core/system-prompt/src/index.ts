@@ -120,6 +120,7 @@ export interface PromptAssembly {
 
 const SECTION_ORDERS = {
   HARNESS_IDENTITY: -1000,
+  OPERATING_GUIDANCE: -900,
   DEPLOYMENT_PERSONA_PREFIX: 0,
   PLAN_POLICY: 500,
   TEAM_POLICY: 600,
@@ -172,6 +173,28 @@ export type PromptContextOrderName = keyof typeof CONTEXT_ORDERS
  * is what makes the replacement work rather than duplicate.
  */
 export const PERSONA_PREFIX_SECTION = 'deployment:persona-prefix'
+
+/**
+ * The harness-owned operating-guidance section name. Unlike the deployment
+ * persona, no preset shadows this name: a base-backed profile keeps the same
+ * execution discipline whichever persona an agent selects.
+ */
+export const OPERATING_GUIDANCE_SECTION = 'harness:operating-guidance'
+
+/**
+ * The harness-owned execution discipline. It lives in code rather than in a
+ * bundle config because each mode bundle replaces the `system-prompt` row's
+ * whole config, so a deployment-authored value would survive in the base bundle
+ * and vanish in every profile that patches that row afterwards — the opposite
+ * of the one rule every profile is meant to share.
+ *
+ * Every sentence answers measured waste from real session logs: a command that
+ * failed for an environmental reason costs its full wall time again to learn
+ * the same fact, a long serial command stalls independent work that could have
+ * run beside it, and a long command whose output was piped into a filter costs
+ * its full duration again to answer a later question about that output.
+ */
+const OPERATING_GUIDANCE_TEXT = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run.'
 
 /** Deployment persona suffix section name shared by global and scoped contributions. */
 export const PERSONA_SUFFIX_SECTION = 'deployment:persona-suffix'
@@ -242,6 +265,12 @@ function compareToolNames(a: ToolSchema, b: ToolSchema): number {
 export interface Config {
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
+  /**
+   * Include the harness-owned execution discipline in the
+   * `harness:operating-guidance` section (default true). A deployment that owns
+   * a byte-exact prompt turns it off.
+   */
+  includeOperatingGuidance?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
   includeRuntimeContext?: boolean
   /**
@@ -399,6 +428,7 @@ class PromptLayer implements ScopeLayer {
 export class SystemPrompt extends Service {
   static Config: z<Config> = z.object({
     includeHarnessIdentity: z.boolean().default(true),
+    includeOperatingGuidance: z.boolean().default(true),
     includeRuntimeContext: z.boolean().default(true),
     personaPrefix: z.string().default(''),
     personaSuffix: z.string().default(''),
@@ -421,6 +451,15 @@ export class SystemPrompt extends Service {
         name: 'harness:identity',
         order: this.getSectionOrder('HARNESS_IDENTITY'),
         text: 'You are an AI agent powered by DeepSeek Harness.',
+      })
+    }
+    // Harness-owned, so no preset shadows it: a base-backed profile keeps the
+    // same execution discipline whichever persona an agent selects.
+    if (config.includeOperatingGuidance ?? true) {
+      this.section({
+        name: OPERATING_GUIDANCE_SECTION,
+        order: this.getSectionOrder('OPERATING_GUIDANCE'),
+        text: OPERATING_GUIDANCE_TEXT,
       })
     }
     this.section({

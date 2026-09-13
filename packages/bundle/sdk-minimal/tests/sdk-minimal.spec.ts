@@ -70,6 +70,7 @@ describe('dsh-sdk-minimal bundle', () => {
     })
     expect(rows.find(row => row.id === 'system-prompt')?.config).toEqual({
       includeHarnessIdentity: false,
+      includeOperatingGuidance: false,
       includeRuntimeContext: false,
       personaPrefix: { __jsExpr: "process.env.DSH_SYSTEM_PROMPT ?? 'You are a helpful software engineer assistant.'" },
     })

@@ -462,6 +462,11 @@
 
     # The deployment persona is a deployment choice; plan-mode and tool plugins own
     # their own prompt sections.
+    #
+    # The harness-owned execution discipline in `harness:operating-guidance` is
+    # NOT configured here: each mode bundle up to web replaces this row's whole
+    # `config`, so a value set at this layer would vanish in every profile that
+    # patches the row afterwards. It is owned by the plugin in code instead.
     - id: system-prompt
       name: '@deepseek-ai/dsh-system-prompt'
       config:
