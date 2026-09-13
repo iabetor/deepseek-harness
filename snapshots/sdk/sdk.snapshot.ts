@@ -65,6 +65,14 @@ import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 const corpusRoot = fileURLToPath(new URL('../', import.meta.url))
 
 const MINIMAL_SYSTEM_PROMPT = 'You are the environment-selected minimal software engineer.'
+/**
+ * The harness-owned execution discipline every base-backed profile renders
+ * ahead of its persona. Pinned verbatim here because it is model-visible text:
+ * a reworded rule must fail this suite rather than silently ship.
+ */
+const OPERATING_GUIDANCE = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run.'
+/** Guidance ahead of the deployment persona, in the order the assembly renders them. */
+const MINIMAL_SYSTEM_WITH_GUIDANCE = `${OPERATING_GUIDANCE}\n\n${MINIMAL_SYSTEM_PROMPT}`
 const MINIMAL_BASH_DESCRIPTION = `Run commands in a bash shell
 * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
 * You don't have access to the internet via this tool.
@@ -142,7 +150,7 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
   'persistent-tools': {
     environment: { DSH_SYSTEM_PROMPT: MINIMAL_SYSTEM_PROMPT },
     expectedTools: { bash: ['command'], str_replace_editor: ['command', 'path'] },
-    expectedSystem: MINIMAL_SYSTEM_PROMPT,
+    expectedSystem: MINIMAL_SYSTEM_WITH_GUIDANCE,
     expectedToolDescriptions: { bash: MINIMAL_BASH_DESCRIPTION },
     runtimeContext: {
       includes: ['Current DSH file policy: danger-full-access', 'Approval prompts are disabled in this session'],

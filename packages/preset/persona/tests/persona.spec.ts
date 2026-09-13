@@ -5,6 +5,13 @@ import { describe, expect, it } from 'vitest'
 import * as Persona from '@deepseek-ai/dsh-persona'
 import { PERSONA_SUFFIX_SECTION, PERSONA_PREFIX_SECTION } from '@deepseek-ai/dsh-persona'
 
+/**
+ * The harness-owned execution discipline every assembly renders after the
+ * identity. Pinned verbatim because it is model-visible text: a reworded rule
+ * must fail this suite rather than silently ship.
+ */
+const GUIDANCE = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run.'
+
 async function harness(deploymentPersona: string): Promise<Context> {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt, { personaPrefix: deploymentPersona })
@@ -29,7 +36,7 @@ describe('the persona row', () => {
       const fiber = await scope.ctx.plugin(Persona, { prefix: 'Preset.', suffix: 'Workspace {{cwd}}.' })
       const assembly = await ctx.systemPrompt.assemble({ scope: key })
       expect(assembly.sections.find(section => section.name === PERSONA_SUFFIX_SECTION)?.text).toBe('Workspace {{cwd}}.')
-      expect(renderPrompt(assembly)).toBe('You are an AI agent powered by DeepSeek Harness.\n\nPreset.\n\nUse tools.\n\nWorkspace /local.')
+      expect(renderPrompt(assembly)).toBe(`You are an AI agent powered by DeepSeek Harness.\n\n${GUIDANCE}\n\nPreset.\n\nUse tools.\n\nWorkspace /local.`)
       expect(renderPrompt(await ctx.systemPrompt.assemble())).toContain('Global workspace.')
       await fiber.dispose()
       const restored = renderPrompt(await ctx.systemPrompt.assemble({ scope: key }))

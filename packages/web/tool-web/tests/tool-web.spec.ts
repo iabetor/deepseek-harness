@@ -983,7 +983,10 @@ describe('scope-aware web guidance', () => {
   })
 })
 
-/** Preserve the default persona and exact section separators in the oracle. */
+/** The harness-owned execution discipline every assembly renders after the identity. */
+const OPERATING_GUIDANCE = "A command that already failed for an environmental reason \u2014 a missing dependency, browser, or credential \u2014 fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command's duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command's output in a file before filtering it, so that asking a second question about the output never costs a second run."
+
+/** Preserve the default opener, guidance, and exact section separators in the oracle. */
 function withPersona(...sections: string[]): string {
-  return ['You are an AI agent powered by DeepSeek Harness.', ...sections].join('\n\n')
+  return ['You are an AI agent powered by DeepSeek Harness.', OPERATING_GUIDANCE, ...sections].join('\n\n')
 }
