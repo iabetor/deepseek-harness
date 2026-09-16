@@ -8,7 +8,7 @@ Status: implemented
 
 右侧 Sidebar 的[停靠基础设施](2026-09-04-right-sidebar-docking-infrastructure.zh.md)与[tab 类型注册表](../architecture/2026-09-05-sidebar-tab-types-and-navigation.zh.md)给了插件一个注册 tab 类型的位置，但没有类型的停靠面只是一根空列。三个问题必须先由随包交付的代码答出来，别人才谈得上注册类型：一个新 pane 在承载内容之前显示什么；agent 产出或读过的文件如何不离开产品就能查看；读者如何找到会话从未提到的文件。这些答案还要把类型作者模型完整演示一遍——静态定义、keyed 坑位里的体、类型自有状态用的 Slot store 与 inject face、地址背后活数据用的 `useResource`——让 `ui-sidebar-right` 之外写的类型有一份可照抄的样板，而不只有一份契约。
 
-每个答案都带着代码本身解释不了的产品规则：文本文件为什么按页读而不是整读，文件变了为什么只提示不刷新，文件树为什么是不认领任何地址的页类型，引导页为什么交出自己的 tab 而不是在旁边再开一个。本文为三个随包交付的类型记下这些决定。
+每个答案都带着代码本身解释不了的产品规则：文本文件为什么按页读而不是整读，文件变了最初为什么只提示不刷新（此后已修订，见 [Preview 跟随 agent 写入](2026-09-16-preview-follows-agent-writes.zh.md)），文件树为什么是不认领任何地址的页类型，引导页为什么交出自己的 tab 而不是在旁边再开一个。本文为三个随包交付的类型记下这些决定。
 
 ## Decision
 
@@ -40,7 +40,7 @@ store 是 Slot 标准件：每会话一个独占实例，按 tab id 分桶，持
 
 导航是一个 `line`。`read` 工具行把它 1 起的 `offset` 以 `openResource(address, { params: { line } })` 传来，产物 chip 什么都不传；体把 `navigation.params` 收窄为 `SidebarRightResourceParamsMap['file']`（`{ line?: number }`，由 `file` 类型的拥有者声明），不做运行时校验，因为调用方与体相遇在同进程的类型化边界上。已加载的页够不到该行时，体读下一页，再读，直到覆盖它或文件结束——页按顺序加载，没有 seek——然后把该行滚到体顶部并高亮，每个 `navigation.revision` 一次。store 记下已答过的 revision，于是同一 revision 下重新挂载的体恢复滚动位置而不再跳；对同一文件再次 `openResource`（聚焦而非复制）以新 revision 到来并再跳一次。超出文件末尾的行在 `eof` 处静默停下；补页途中失败的页终止补页并显示失败行。
 
-文件变了只提示，不应用。正文把已加载版本及读取开始时捕获的观察版本与后续 `WorkspaceFileStat.version` 比较；不同则显示变更提示。重新载入只通过 Preview face 重读当前 tab，不修改共享资源元数据或其他 tab。资源失败占用同一个提示位置，已加载内容仍保留在下方。
+文件变了曾经只提示、不应用；[Preview 跟随 agent 写入](2026-09-16-preview-follows-agent-writes.zh.md)取代了该规则，正文现在会重读不是本 tab 所做的写入。重新载入只通过 Preview face 重读当前 tab，不修改共享资源元数据或其他 tab。资源失败会在已加载内容之上保留一行说明，并提供由读者主动点击的重读。
 
 正文头部为一行：左侧显示完整文件路径，右侧放匹配渲染器菜单、按条件出现的换行开关和重新载入按钮。[Document Preview README](../../../../packages/client/ui-sidebar-documentpreview/README.zh.md)负责当前控件、渲染器行为与滚动方式。预览占满 pane 正文的全部高度。
 
@@ -100,8 +100,8 @@ face 是树唯一的异步半边。`start(tabId, root, signal)` 以根展开态�
 
 - `ui-sidebar-right` 之外写的类型有了一份完整样板：`ui-sidebar-documentpreview` 演示一个查看器——由地址推出的读取、按 tab 分桶的独占 Slot store、inject face、类型化的导航参数与体内自有控件；`ui-sidebar-files` 演示一个带引导入口、懒填充 store 的页类型；引导页演示一个链 fallback。
 - 按页读取让每次请求都有界（`maxLines` 行、`maxBytes` 字节），代价是一个 **加载更多** 控件、没有总行数，以及到深处某行的顺序补页；导航到一个大文件的第 40,000 行要先读八页。
-- 只提示不应用，让读者在 agent 反复写入期间保住位置，代价是点击之前显示的是旧文本；外部编辑永不提示。
-- 重新载入只读第 1 页，所以身在文件深处的读者重载后回到文件开头再往后翻；滚动位置保留但可能指向已加载文本之外。
+- 只提示不应用，曾让读者在 agent 反复写入期间保住位置，代价是点击之前显示的是旧文本；[Preview 跟随 agent 写入](2026-09-16-preview-follows-agent-writes.zh.md)以等待窗口后的自动重读取代了它，外部编辑仍然永不提示。
+- 重新载入只读第 1 页，所以身在文件深处的读者重载后回到文件开头再往后翻；滚动位置保留但可能指向已加载文本之外。自动重读共用这条路径。
 - 按 tab 的视图状态跨 tab 切换与重新挂载存活，随 tab 或页面一起消失；什么都不持久化。
 - 文件树渲染 Host 列出的一切，因此大目录最多显示 `maxEntries` 行加一个标记，没有搜索或过滤，读者靠逐层展开找到深处的文件。
 - 三个类型面向用户的每条文案都由 locale 持有并列在本文中，文案评审只需读一处。

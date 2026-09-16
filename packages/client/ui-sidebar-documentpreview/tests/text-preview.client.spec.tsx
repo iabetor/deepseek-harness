@@ -20,7 +20,7 @@ import { CodeBody } from '../src/client/code/CodeBody.tsx'
 import type { DocumentPreviewDefinition } from '../src/client/document/registry.ts'
 import { TextBody } from '../src/client/text/TextBody.tsx'
 import { PLAIN_BODY_ID } from '../src/client/text/index.ts'
-import { documentSlots, ABSOLUTE_PATH, ADDRESS, PATH, SESSION, TAB_ID, failure, harness, page, settle } from './fixtures.client.ts'
+import { documentSlots, ABSOLUTE_PATH, ADDRESS, PATH, SESSION, TAB_ID, failure, harness, page, settle, settleChange } from './fixtures.client.ts'
 
 const LINE_HEIGHT = 20
 
@@ -212,7 +212,6 @@ describe('TextPreview — pages', () => {
     expect(view.container.querySelector('[data-textpreview-url]')?.getAttribute('data-textpreview-url')).toBe(ADDRESS)
     expect(view.container.textContent).toContain(PATH)
     expect(view.container.querySelector('[data-textpreview-more]')).not.toBeNull()
-    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
   })
 
   it('reads nothing on a remount while the store holds the pages', async () => {
@@ -287,22 +286,57 @@ describe('TextPreview — pages', () => {
     expect(view.container.querySelector('[data-textpreview-failed]')).toBeNull()
   })
 
-  it('announces a change and, on request, re-reads the pages keeping the reader\'s place', async () => {
+  it('re-reads a change by itself, keeping the reader\'s place', async () => {
     const h = harness({ 1: page(1, ['a', 'b'], true) })
     const view = render(<TextPreview {...h.props()} />)
     await settle()
     fireEvent.scroll(body(view.container), { target: { scrollTop: 50 } })
     h.setVersion('v2')
     view.rerender(<TextPreview {...h.props()} />)
-    expect(view.container.querySelector('[data-textpreview-changed]')?.textContent).toContain('changed')
+    // The reader is given the content, not a bar asking them to fetch it.
+    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
     expect(lines(view.container)).toEqual(['a\n', 'b\n'])
     h.script(1, page(1, ['A', 'B', 'C'], true, 'v2'))
-    click(view.container, '[data-textpreview-reload-now]')
+    await settleChange()
     expect(h.read).toHaveBeenCalledTimes(2)
-    await settle()
     expect(h.read).toHaveBeenLastCalledWith(SESSION, PATH, 1, h.controller.signal)
     expect(lines(view.container)).toEqual(['A\n', 'B\n', 'C\n'])
+    // The re-read emptied the body, and the scroller reported the zero that
+    // came of it; the reader's own place is what the store kept.
     expect(body(view.container).scrollTop).toBe(50)
+  })
+
+  it('merges writes that arrive together into one re-read', async () => {
+    const h = harness({ 1: page(1, ['a'], true) })
+    const view = render(<TextPreview {...h.props()} />)
+    await settle()
+    h.script(1, page(1, ['final'], true, 'v3'))
+    h.setVersion('v2')
+    view.rerender(<TextPreview {...h.props()} />)
+    h.setVersion('v3')
+    view.rerender(<TextPreview {...h.props()} />)
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(2)
+    expect(lines(view.container)).toEqual(['final\n'])
+  })
+
+  it('waits to re-read a hidden tab until the reader can see it', async () => {
+    const h = harness({ 1: page(1, ['a'], true) })
+    const view = render(<TextPreview {...h.props()} />)
+    await settle()
+    h.setVisible(false)
+    h.setVersion('v2')
+    view.rerender(<TextPreview {...h.props()} />)
+    h.script(1, page(1, ['fresh'], true, 'v2'))
+    await settleChange()
+    // Nothing to read for nobody: the pages already held stay.
+    expect(h.read).toHaveBeenCalledTimes(1)
+    expect(lines(view.container)).toEqual(['a\n'])
+    h.setVisible(true)
+    view.rerender(<TextPreview {...h.props()} />)
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(2)
+    expect(lines(view.container)).toEqual(['fresh\n'])
   })
 })
 
@@ -312,57 +346,62 @@ describe('TextPreview — the file\'s metadata', () => {
     const view = render(<TextPreview {...h.props()} />)
     await settle()
     expect(h.instance.getSnapshot().byTab[TAB_ID]).toMatchObject({ version: 'v2', observedVersion: 'v1' })
-    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
+    // The page already carried v2, so observing v2 at read start is no change.
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(1)
+    h.script(1, page(1, ['refreshed'], true, 'v4'))
     h.setVersion('v3')
     view.rerender(<TextPreview {...h.props()} />)
-    expect(view.container.querySelector('[data-textpreview-changed]')).not.toBeNull()
-    h.script(1, page(1, ['refreshed'], true, 'v4'))
-    click(view.container, '[data-textpreview-reload-now]')
-    await settle()
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(2)
     expect(h.instance.getSnapshot().byTab[TAB_ID]).toMatchObject({ version: 'v4', observedVersion: 'v3' })
-    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
-    h.setVersion('v5')
-    view.rerender(<TextPreview {...h.props()} />)
-    expect(view.container.querySelector('[data-textpreview-changed]')).not.toBeNull()
+    expect(lines(view.container)).toEqual(['refreshed\n'])
+    // The pages now carry v4 while v3 was the version observed at their read's
+    // start: the pair is settled, so no further read follows.
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(2)
   })
 
-  it('announces metadata that changes while the first content read is still pending', async () => {
-    const h = harness()
+  it('re-reads when metadata changes while the first content read is still pending', async () => {
+    const h = harness({ 1: page(1, ['read v2'], true, 'v2') })
     const pending = Promise.withResolvers<ReturnType<typeof page>>()
     h.read.mockReturnValueOnce(pending.promise)
     const view = render(<TextPreview {...h.props()} />)
     h.setVersion('v2')
     view.rerender(<TextPreview {...h.props()} />)
     await act(async () => { pending.resolve(page(1, ['read v1'], true)); await pending.promise })
-    expect(h.read).toHaveBeenCalledTimes(1)
     expect(h.instance.getSnapshot().byTab[TAB_ID]).toMatchObject({ version: 'v1', observedVersion: 'v1' })
-    expect(view.container.querySelector('[data-textpreview-changed]')).not.toBeNull()
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(2)
+    expect(lines(view.container)).toEqual(['read v2\n'])
   })
 
-  it('refreshes one tab without acknowledging another tab on the same file and store', async () => {
+  it('refreshes each visible tab on its own, leaving a hidden one to its own turn', async () => {
     const h = harness({ 1: page(1, ['old'], true) })
     const otherId = 'tab-2' as TabId
     const other = harness({}, otherId)
     const firstProps = h.props()
     const secondProps = { ...firstProps, useTabInfo: other.props().useTabInfo }
+    other.setVisible(false)
     const first = render(<TextPreview {...firstProps} />)
     const second = render(<TextPreview {...secondProps} />)
     await settle()
+    h.script(1, page(1, ['new'], true, 'v2'))
     h.setVersion('v2')
     first.rerender(<TextPreview {...firstProps} />)
     second.rerender(<TextPreview {...secondProps} />)
-    expect(first.container.querySelector('[data-textpreview-changed]')).not.toBeNull()
-    expect(second.container.querySelector('[data-textpreview-changed]')).not.toBeNull()
-    h.script(1, page(1, ['new'], true, 'v2'))
-    click(first.container, '[data-textpreview-reload-now]')
-    await settle()
-    expect(first.container.querySelector('[data-textpreview-changed]')).toBeNull()
-    expect(second.container.querySelector('[data-textpreview-changed]')).not.toBeNull()
+    await settleChange()
     expect(lines(first.container)).toEqual(['new\n'])
     expect(lines(second.container)).toEqual(['old\n'])
     expect(h.instance.getSnapshot().byTab[TAB_ID]).toMatchObject({ version: 'v2', observedVersion: 'v2' })
     expect(h.instance.getSnapshot().byTab[otherId]).toMatchObject({ version: 'v1', observedVersion: 'v1' })
     expect(h.file?.version).toBe('v2')
+    // The tab nobody could see reads when the reader comes back to it.
+    other.setVisible(true)
+    second.rerender(<TextPreview {...secondProps} />)
+    await settleChange()
+    expect(lines(second.container)).toEqual(['new\n'])
+    expect(h.instance.getSnapshot().byTab[otherId]).toMatchObject({ version: 'v2' })
   })
 
   it('keeps metadata failure separate from per-tab content refresh', async () => {
@@ -375,9 +414,11 @@ describe('TextPreview — the file\'s metadata', () => {
     const bar = view.container.querySelector('[data-textpreview-meta-failed]')
     expect(bar?.getAttribute('data-textpreview-meta-failed')).toBe('workspace-file/not-found')
     expect(bar?.textContent).toContain('error.notFound')
-    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
     expect(lines(view.container)).toEqual(['a\n', 'b\n'])
-    // Retrying content does not acknowledge or mutate the shared metadata failure.
+    // A failed metadata frame outranks the change behind it: no re-read runs on
+    // its own, and the reader's own request neither clears nor mutates it.
+    await settleChange()
+    expect(h.read).toHaveBeenCalledTimes(1)
     h.script(1, page(1, ['A'], true, 'v2'))
     click(view.container, '[data-textpreview-reload-now]')
     expect(h.read).toHaveBeenCalledTimes(2)
@@ -388,7 +429,6 @@ describe('TextPreview — the file\'s metadata', () => {
     h.setFailure(undefined)
     view.rerender(<TextPreview {...h.props()} />)
     expect(view.container.querySelector('[data-textpreview-meta-failed]')).toBeNull()
-    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
   })
 
   it('says a metadata-and-read failure once and retries the content read', async () => {
@@ -581,12 +621,12 @@ describe('TextPreview — header controls', () => {
     expect(body(view.container).hasAttribute('data-textpreview-wrap')).toBe(false)
   })
 
-  it('reloads only this tab from the header without a change announced', async () => {
+  it('re-reads only this tab from the header while metadata is unchanged', async () => {
     const h = harness({ 1: page(1, ['one'], true) })
     const view = render(<TextPreview {...h.props()} />)
     await settle()
     expect(h.useResource).toHaveBeenCalledWith(ADDRESS)
-    expect(view.container.querySelector('[data-textpreview-changed]')).toBeNull()
+    // Metadata still reports v1, so only the control's own read brings v2 in.
     h.script(1, page(1, ['uno'], true, 'v2'))
     click(view.container, '[data-textpreview-tool="reload"]')
     expect(h.read).toHaveBeenCalledTimes(2)

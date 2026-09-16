@@ -3,11 +3,11 @@
  *
  * Two sources meet here. The standard `useResource` hook gives the file's
  * metadata — its version — and this type's
- * own store holds the content it read through its face. A Host-reported change is
- * announced, not applied: reloading under a reader would lose their place, so
- * the bar waits for a click. A failed metadata frame — the file gone, its
- * workspace unknown — takes the same bar's place over the pages already loaded,
- * with the same reload. The type's controls, viewer choice, wrap and reload, sit at the end of
+ * own store holds the content it read through its face. A Host-reported change
+ * re-reads on its own for a tab the reader can see, merging writes that arrive
+ * together; a hidden tab waits until it is shown. A failed metadata frame — the
+ * file gone, its workspace unknown — is announced over the pages already loaded,
+ * with a reload the reader asks for. The type's controls, viewer choice, wrap and reload, sit at the end of
  * the path row; the Sidebar's strip carries none of them.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -33,6 +33,17 @@ import css from './TextPreview.module.css'
 
 export { linesOf, loadedPages, lastLineLoaded, scrollToLine } from './text/lines.ts'
 export type { LoadedPage } from './text/lines.ts'
+
+/**
+ * How long writes to the file may keep arriving before one re-read covers them.
+ *
+ * An agent that edits one file several times in a turn emits one Host
+ * observation per write, and a re-read per observation would flash the body
+ * once for each. Waiting this long after the last observation merges a burst
+ * into the single read that matters; a reader watching one file sees the
+ * content settle once rather than stutter.
+ */
+const CHANGE_SETTLE_MS = 200
 
 /** Keep the path fade in sync with whether its full text fits the header row. */
 function usePathClipped(
@@ -130,6 +141,12 @@ export function TextPreview({
   const loaded = useMemo(() => loadedPages(pages ?? {}), [pages])
   const loadedThrough = lastLineLoaded(loaded)
   const hasContent = mode === 'renderer' ? current?.version !== undefined : loaded.length > 0 || current?.complete !== undefined
+  const observedVersion = meta.value?.version
+  // A write that supersedes the pages this tab holds. A renderer that writes the
+  // file it displays reports it through `reload` itself, so what reaches here is
+  // a write it did not make: an agent tool, or another Session.
+  const pendingChange = current?.version !== undefined && observedVersion !== undefined
+    && observedVersion !== current.version && observedVersion !== current.observedVersion
   storedScrollTopRef.current = state?.scrollTop ?? 0
   const bindBody = useCallback((body: HTMLDivElement | null): void => {
     const previous = bodyRef.current
@@ -141,7 +158,6 @@ export function TextPreview({
     scrollportRef.current = next
     if (next !== null) next.scrollTop = storedScrollTopRef.current
   }, [])
-
   // First mount reads the first page; a body coming back to a tab with content
   // reads nothing, because the store outlives the body.
   const started = current !== undefined
@@ -191,6 +207,29 @@ export function TextPreview({
   const rendererReload = useCallback((): void => {
     if (canRead && selected !== undefined) prepareRenderer(tab.id, signal, selected.id, meta.value?.version, true)
   }, [canRead, prepareRenderer, tab.id, signal, selected?.id, meta.value?.version])
+
+  // Re-read this tab's content from its own first unit. Rides the reload the
+  // header control and a writing renderer already use, so the pages, the version
+  // they belong to, and the reader's recorded place settle in one step.
+  const reload = useCallback((): void => {
+    if (!canRead) return
+    if (mode === 'text-pages') reloadPages(tab.id, file, signal, meta.value?.version)
+    else if (mode === 'bytes-complete') reloadAll(tab.id, file, signal, meta.value?.version)
+    else rendererReload()
+  }, [canRead, mode, tab.id, file, signal, reloadPages, reloadAll, rendererReload, meta.value?.version])
+
+  // A write this tab did not make — an agent tool, or another Session — re-reads
+  // on its own for a reader who can see it. Writes arriving together merge into
+  // one re-read; a hidden tab waits until it is shown rather than discarding
+  // where its reader was, and a failed metadata frame is never overridden by a
+  // content read. A read already in flight settles first, so a burst that keeps
+  // rewriting the file cannot start re-reads on top of each other.
+  useEffect(() => {
+    if (!pendingChange || !tab.visible || meta.failure !== undefined || !canRead || state?.loading === true) return undefined
+    const timer = setTimeout(reload, CHANGE_SETTLE_MS)
+    return () => { clearTimeout(timer) }
+  }, [pendingChange, tab.visible, meta.failure, canRead, state?.loading, reload])
+
   const content = useMemo((): DocumentContent | undefined => {
     if (mode === 'renderer') {
       if (current === undefined) return undefined
@@ -236,52 +275,29 @@ export function TextPreview({
   }
   const next = loadedThrough + 1
   const { name } = pathPartsOf(displayPath)
-  const observedVersion = meta.value?.version
-  const changed = current?.version !== undefined && observedVersion !== undefined
-    && observedVersion !== current.version && observedVersion !== current.observedVersion
   const loadNext = (): void => {
     if (!canRead || current?.loading || current?.eof) return
     loadPage(tab.id, file, next, signal, meta.value?.version)
   }
-  const reload = (): void => {
-    if (!canRead) return
-    if (mode === 'text-pages') reloadPages(tab.id, file, signal, meta.value?.version)
-    else if (mode === 'bytes-complete') reloadAll(tab.id, file, signal, meta.value?.version)
-    else rendererReload()
-  }
   return (
     <div className={css.preview} data-textpreview-state="text" data-textpreview-url={tab.contentId} data-document-preview={selected.id}>
-      {meta.failure !== undefined && hasContent
-        ? (
-          // The file's metadata failed — gone, or its workspace unknown — which
-          // outranks a pending change; the pages already read stay under it.
-          // With nothing read the body's own failure already says it, so the
-          // bar would only repeat the same line.
-          <p className={css.changed} data-textpreview-meta-failed={meta.failure.code}>
-            <span>{failureLine(t, meta.failure)}</span>
-            <button
-              type="button"
-              className={css.action}
-              data-textpreview-reload-now
-              onClick={reload}
-            >
-              {t('reloadNow')}
-            </button>
-          </p>
-        )
-        : changed && (
-          <p className={css.changed} data-textpreview-changed>
-            <span>{t('changed')}</span>
-            <button
-              type="button"
-              className={css.action}
-              data-textpreview-reload-now
-              onClick={reload}
-            >
-              {t('reloadNow')}
-            </button>
-          </p>
-        )}
+      {meta.failure !== undefined && hasContent && (
+        // The file's metadata failed — gone, or its workspace unknown — so the
+        // pages already read are announced as the last ones that could be read.
+        // With nothing read the body's own failure already says it, so this
+        // line would only repeat it.
+        <p className={css.notice} data-textpreview-meta-failed={meta.failure.code}>
+          <span>{failureLine(t, meta.failure)}</span>
+          <button
+            type="button"
+            className={css.action}
+            data-textpreview-reload-now
+            onClick={reload}
+          >
+            {t('reloadNow')}
+          </button>
+        </p>
+      )}
       <div className={css.header}>
         <HeaderPath pathRef={pathRef} pathTextRef={pathTextRef} path={displayPath} />
         {candidates.length > 1
@@ -340,6 +356,11 @@ export function TextPreview({
           /* v8 ignore next -- callback refs bind the scrollport during commit, before user input. */
           if (body === null) return
           if (event.target !== body) return
+          // A re-read empties the body before its first page returns, and a
+          // scroller with no height clamps its own offset to zero and reports
+          // the move. Recording it would overwrite the place the reader held
+          // with the zero the clamp produced.
+          if (!hasContent) return
           actions.scrolled(tab.id, body.scrollTop)
           if (mode === 'text-pages' && current?.failure === undefined && body.clientHeight > 0
             && body.scrollTop + body.clientHeight >= body.scrollHeight - 1) loadNext()
@@ -350,8 +371,8 @@ export function TextPreview({
         )}
         {content !== undefined && renderSlot('sidebar.right.tab.document', {
           resourceAddress: tab.contentId, content, wrap: state.wrap, scrollportRef: bindScrollport,
-          // A body that wrote to this file reports it here instead of leaving the
-          // reader to notice the changed bar and click it.
+          // A body that writes this file reports it here, re-reading ahead of the
+          // observation that would otherwise wait out the settle window.
           reload,
         }, {
           entryKey: selected.id, hookContext: useTabInfo,

@@ -10,7 +10,6 @@
 export const zh = {
   loading: '正在读取…',
   loadMore: '加载更多',
-  changed: '文件已更新，当前显示为旧内容',
   reloadNow: '重新载入',
   reload: '重新读取文件',
   'wrap.enable': '自动换行',
@@ -36,7 +35,6 @@ export type SidebarDocumentPreviewKey = keyof typeof zh
 export const en = {
   loading: 'Reading…',
   loadMore: 'Load more',
-  changed: 'The file has changed, showing the previous content.',
   reloadNow: 'Reload',
   reload: 'Read the file again',
   'wrap.enable': 'Turn on line wrap',

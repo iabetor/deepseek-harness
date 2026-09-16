@@ -13,14 +13,14 @@ import { OfficeBody, type OfficeBodyProps } from '../src/client/office/OfficeBod
 import { createOfficeStore, type OfficeState } from '../src/client/office/store.ts'
 import type { ReadOfficeDocument } from '../src/client/office/cache.ts'
 import { en } from '../src/client/office/locales.ts'
-import { harness, ABSOLUTE_PATH, TAB_ID, settle } from './fixtures.client.ts'
+import { harness, ABSOLUTE_PATH, TAB_ID, settle, settleChange } from './fixtures.client.ts'
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-it('lets a non-Office renderer load content, report its version, and reload through the shared toolbar', async () => {
+it('lets a non-Office renderer load content, report its version, and reload it by itself', async () => {
   const h = harness()
   const custom: DocumentPreviewDefinition = {
     id: 'custom-viewer', extensions: ['md'], binaryExtensions: ['md'], title: () => 'Custom', loading: 'renderer',
@@ -56,13 +56,13 @@ it('lets a non-Office renderer load content, report its version, and reload thro
   expect(h.instance.getSnapshot().byTab[TAB_ID]?.version).toBe('v1')
   h.setVersion('v2')
   view.rerender(<TextPreview {...h.props()} renderSlot={renderSlot} useDocumentPreviews={useDocumentPreviews} />)
-  expect(screen.getByText('changed')).toBeTruthy()
+  // A write this tab did not make re-reads on its own through the renderer's own
+  // reload, with no bar asking the reader to fetch it.
   expect(read).toHaveBeenCalledTimes(1)
-  fireEvent.click(screen.getByRole('button', { name: 'reloadNow' }))
+  await settleChange()
   expect(await screen.findByText('Custom content v2')).toBeTruthy()
   expect(read).toHaveBeenCalledTimes(2)
   expect(h.instance.getSnapshot().byTab[TAB_ID]?.version).toBe('v2')
-  expect(screen.queryByText('changed')).toBeNull()
   expect(h.read).not.toHaveBeenCalled()
   expect(h.bytes).not.toHaveBeenCalled()
   expect(h.instance.getSnapshot().byTab[TAB_ID]?.complete).toBeUndefined()
@@ -139,12 +139,11 @@ it('loads without reading raw bytes, retains content across remounts, and reload
   expect(h.read).toHaveBeenCalledTimes(1)
   h.h.setVersion('v2')
   mounted.rerender(<h.View />)
-  expect(screen.getByText('changed')).toBeTruthy()
+  // The source change re-reads on its own; the reader is never asked to fetch it.
   expect(h.read).toHaveBeenCalledTimes(1)
-  fireEvent.click(screen.getByRole('button', { name: 'reloadNow' }))
+  await settleChange()
   expect(h.read).toHaveBeenCalledTimes(2)
   await act(async () => { h.pending[1]!.deferred.resolve(result('v2')) })
-  expect(screen.queryByText('changed')).toBeNull()
   expect(screen.getByText('PDF v2')).toBeTruthy()
 })
 

@@ -174,28 +174,29 @@ describe('document extension seat', () => {
     expect(h.read).toHaveBeenCalledTimes(1)
   })
 
-  it('lets a document body re-read the file it changed, without the manual reload bar', async () => {
+  it('lets a document body re-read the file it changed, without waiting out the settle delay', async () => {
     // 渲染器自己改了文件(编辑器 / 改动叠加层接受或撤销一个 hunk)后,壳持有的
-    // 内容已经过时。渲染器调 props.reload() 直接走壳自己的重读路径:页面与
-    // "文件已更新"提示条一并落定,不用等读者去点。
+    // 内容已经过时。渲染器调 props.reload() 直接走壳自己的重读路径:页面与它们
+    // 所属的版本一并落定,不等自动跟随的等待窗口,也不用等读者去点。
     const h = await boot()
     h.register('reload-reader', 'text-pages', 'extension')
     h.open('notes.md')
     await waitFor(() => { expect(h.view.container.querySelector('[data-renderer="reload-reader"]')?.textContent).toBe('first\nsecond') })
     expect(h.read).toHaveBeenCalledTimes(1)
-    // 磁盘在渲染器写入后变了,壳观察到新版本 → 亮出提示条。
+    // 磁盘在渲染器写入后变了。
     h.read.mockImplementation(async (_sessionId, _path, range) => ({
       ok: true,
       value: { absolutePath: '/host/notes', version: 'v2', bytes: 18, offset: range.offset ?? 1, text: 'rewritten', lines: 1, eof: true },
     }))
     await act(async () => { h.rt.ctx.resources.source('dsh-resource://file/session/documents/notes.md') })
-    // 渲染器报告自己写过了 → 重读,内容与版本一起前进。
+    // 渲染器报告自己写过了 → 立即重读,内容与版本一起前进。
     await act(async () => {
       fireEvent.click(h.view.container.querySelector('[data-renderer-reload]')!)
     })
     await waitFor(() => { expect(h.read).toHaveBeenCalledTimes(2) })
     expect(h.read).toHaveBeenLastCalledWith(SESSION, 'notes.md', { offset: 1 }, expect.any(AbortSignal))
     await waitFor(() => { expect(h.view.container.querySelector('[data-renderer="reload-reader"]')?.textContent).toBe('rewritten') })
-    expect(h.view.container.querySelector('[data-textpreview-changed]')).toBeNull()
+    // 内容已跟上,没有留下任何"内容已过时"的说明。
+    expect(h.view.container.querySelector('[data-textpreview-meta-failed]')).toBeNull()
   })
 })

@@ -82,6 +82,17 @@ export async function settle(): Promise<void> {
   })
 }
 
+/**
+ * Let the change-settle window elapse, then flush React's work: what a spec
+ * needs to observe a re-read that followed a change, or that none followed.
+ */
+export async function settleChange(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => { setTimeout(resolve, 250) })
+  })
+  await settle()
+}
+
 /** What one tab record's harness hands a spec. Named so the helper's declaration stays portable. */
 export interface Harness {
   /** The live store instance both components read. */
@@ -106,6 +117,8 @@ export interface Harness {
   setVersion(version: string | undefined): void
   /** Script the next render's `useResource` as failed with `failure`, or live again with `undefined`. */
   setFailure(failure: RemoteFailure | undefined): void
+  /** Whether the tab record reports the reader can see it. */
+  setVisible(visible: boolean): void
 }
 
 /**
@@ -127,6 +140,7 @@ export function harness(script: Record<number, RemoteResult<WorkspaceFileText>> 
   const controller = new AbortController()
   onTestFinished(() => { controller.abort() })
   const tabActions = { openResource: vi.fn(), openTab: vi.fn(), close: vi.fn(), replace: vi.fn() }
+  const shown = { visible: true }
   const definitions = [textBodyDefinition(() => t('viewer.text'))]
   const renderSlot = documentSlots((_key, owner, opts) => createElement(TextBody, {
     ...owner, useTabInfo: opts.hookContext, sessionId: SESSION, useResource,
@@ -136,7 +150,7 @@ export function harness(script: Record<number, RemoteResult<WorkspaceFileText>> 
       sidebar: { expanded: true, fullscreen: false },
       panel: { id: 'pane-1' },
       tab: {
-        id: tabId, kind: 'text', contentId: ADDRESS, title: 'notes.md', visible: true,
+        id: tabId, kind: 'text', contentId: ADDRESS, title: 'notes.md', visible: shown.visible,
         navigation: { address: ADDRESS, params: navigation.params, revision: navigation.revision },
         signal: controller.signal,
         actions: tabActions,
@@ -166,5 +180,6 @@ export function harness(script: Record<number, RemoteResult<WorkspaceFileText>> 
     script(offset, result) { pages[offset] = result },
     setVersion(version) { current.version = version; refresh() },
     setFailure(failure) { current.failure = failure; refresh() },
+    setVisible(visible) { shown.visible = visible },
   }
 }

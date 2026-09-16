@@ -42,4 +42,4 @@ PDF.js 官方 TextLayerBuilder 在适配宽度的 canvas 上负责选择边界�
 
 ## 影响
 
-替换渲染器不需要改变 Tab 或文件协议。全文格式承担有上限的整文件内存成本，PDF 增加随包发布的 Worker、字体和解码器字节。格式选择和查看状态仅属于当前页面，不是持久 Session 数据。Preview 独立于元数据观察，拥有 RPC 取消和原生缓冲区。tab 保留读取版本及读取开始时捕获的观察版本；刷新它既不丢弃其他 tab 的内容，也不清除其变更提示。文件读取仍非事务，不透明版本只比较相等性、不排序。[录制的浏览器场景](../../../../apps/web/tests/document-preview.e2e.ts) 覆盖共用工具栏、增量文本、隔离的 HTML 依赖、按宽度适配的位图与 SVG 渲染、不可执行的 SVG 脚本，以及惰性连续 PDF Worker 渲染。
+替换渲染器不需要改变 Tab 或文件协议。全文格式承担有上限的整文件内存成本，PDF 增加随包发布的 Worker、字体和解码器字节。格式选择和查看状态仅属于当前页面，不是持久 Session 数据。Preview 独立于元数据观察，拥有 RPC 取消和原生缓冲区。tab 保留读取版本及读取开始时捕获的观察版本；不是本 tab 所做的写入会在观察停止到达后只重读该 tab，读者看不到的 tab 会等到重新可见再读（[Preview 跟随 agent 写入](../feature/2026-09-16-preview-follows-agent-writes.zh.md)）。文件读取仍非事务，不透明版本只比较相等性、不排序。[录制的浏览器场景](../../../../apps/web/tests/document-preview.e2e.ts) 覆盖共用工具栏、增量文本、隔离的 HTML 依赖、可双轴滚动的固有尺寸位图与 SVG 渲染、不可执行的 SVG 脚本，以及惰性连续 PDF Worker 渲染。

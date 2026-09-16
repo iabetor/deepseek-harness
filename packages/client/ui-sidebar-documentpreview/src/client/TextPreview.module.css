@@ -62,8 +62,9 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* Announced, not applied: the reader keeps the text they are looking at. */
-.changed {
+/* A line above the body: the file's metadata failed, so the pages under it are
+   the last ones that could be read. */
+.notice {
   display: flex;
   flex: 0 0 auto;
   gap: 10px;
