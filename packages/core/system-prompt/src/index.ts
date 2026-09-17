@@ -199,8 +199,15 @@ export const OPERATING_GUIDANCE_SECTION = 'harness:operating-guidance'
  * the same fact, a long serial command stalls independent work that could have
  * run beside it, and a long command whose output was piped into a filter costs
  * its full duration again to answer a later question about that output.
+ *
+ * The batching sentence answers the largest measured waste of all. In one
+ * recorded 455-step session, 190 steps issued a single tool call, and 28 runs
+ * of consecutive single-`bash` steps covered 96 steps and 673 seconds even
+ * though the commands within a run were independent. Fixed cost per round trip
+ * measured 5.83 s there, so every independent call folded into a step saves that
+ * cost outright.
  */
-const OPERATING_GUIDANCE_TEXT = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run.'
+const OPERATING_GUIDANCE_TEXT = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run. Issue independent tool calls in one step instead of one per step: calls whose results do not depend on each other cost their full latency again when serialized, and reading or searching several things at once answers in a single round trip.'
 
 /** Deployment persona suffix section name shared by global and scoped contributions. */
 export const PERSONA_SUFFIX_SECTION = 'deployment:persona-suffix'

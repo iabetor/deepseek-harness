@@ -20,7 +20,7 @@ function driverDone(agent: Agent): Promise<void> {
  * identity. Pinned verbatim here because it is model-visible text: a reworded
  * rule must fail this suite rather than silently ship.
  */
-const GUIDANCE = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run.'
+const GUIDANCE = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run. Issue independent tool calls in one step instead of one per step: calls whose results do not depend on each other cost their full latency again when serialized, and reading or searching several things at once answers in a single round trip.'
 /** Identity and guidance together: the fixed opener every assembly starts with. */
 const OPENER = `You are an AI agent powered by DeepSeek Harness.\n\n${GUIDANCE}`
 

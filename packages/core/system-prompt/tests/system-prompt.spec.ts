@@ -15,7 +15,7 @@ import type { PromptContextOrderName, PromptSectionOrderName } from '@deepseek-a
 const BUILT_IN = ['harness:identity', 'harness:operating-guidance', 'deployment:persona-prefix', 'deployment:persona-suffix']
 const IDENTITY = 'You are an AI agent powered by DeepSeek Harness.'
 /** The harness-owned discipline every assembly carries ahead of the persona. */
-const GUIDANCE = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run.'
+const GUIDANCE = 'A command that already failed for an environmental reason — a missing dependency, browser, or credential — fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command\'s duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command\'s output in a file before filtering it, so that asking a second question about the output never costs a second run. Issue independent tool calls in one step instead of one per step: calls whose results do not depend on each other cost their full latency again when serialized, and reading or searching several things at once answers in a single round trip.'
 /** Identity and guidance together — the fixed prefix of a guidance-enabled assembly. */
 const OPENER = `${IDENTITY}\n\n${GUIDANCE}`
 const SECTION_ORDER_NAMES = [
@@ -628,7 +628,14 @@ describe('SystemPrompt', () => {
     ])('preserves literal section text with complete=%s and dynamic=%s', async (complete, dynamic) => {
       const ctx = new Context()
       try {
-        await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false, personaPrefix: '{{model}}' })
+        // Both harness-owned built-ins are off so the expectation names only
+        // this test's own section and the persona; the literal-text rule under
+        // test is independent of which built-ins an assembly carries.
+        await ctx.plugin(SystemPrompt, {
+          includeHarnessIdentity: false,
+          includeOperatingGuidance: false,
+          personaPrefix: '{{model}}',
+        })
         ctx.systemPrompt.variable('model', () => 'actual-model')
         const text = '{{item}} {{model}} {{ model }} {{nested{{item}}}}'
         ctx.systemPrompt.section({ name: 'literal', order: 1, text: dynamic ? () => text : text, interpolate: false, complete })

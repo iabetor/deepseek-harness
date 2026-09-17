@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-13-harness-owned-operating-guidance.md
-2026-09-13-harness-owned-operating-guidance.md: e474d395fb97146a087b93bb48cfd733698dccd4
-2026-09-13-harness-owned-operating-guidance.zh.md: 493e103a3cbedfa083e68d578061c8af702fd24c
+2026-09-13-harness-owned-operating-guidance.md: f3d2a7af780a9f3df562f1dd8d09ffc2b5baae63
+2026-09-13-harness-owned-operating-guidance.zh.md: 25c5949e6c6d31a5946fc47749ad0b16ee7384f0
