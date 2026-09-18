@@ -7,6 +7,7 @@
 /* v8 ignore file -- built-bin acceptance exercises this self-executing dispatch. */
 
 import { readFileSync } from 'node:fs'
+import { basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadLayeredEnv, StartupError } from '@deepseek-ai/dsh-app-boot'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
@@ -22,6 +23,19 @@ function readVersion(): string {
   ) as { version?: unknown }
   return typeof manifest.version === 'string' ? manifest.version : '0.0.0'
 }
+
+/**
+ * Whether this process runs the source tree rather than the bundled bin — the same two
+ * anchors `readVersion` resolves its manifest between.
+ *
+ * A source launch already resolves every workspace package to `src/` through tsx, so its
+ * profiles must stay on `link`: that re-enters the repository, where tsx resolves the same
+ * packages to `src/` as well and each package keeps one module identity. `runtime` would
+ * hand those packages to Node as `lib/`, and the two copies then define every module-scoped
+ * identity — `unique symbol` service keys included — twice in one process, so a service
+ * table written under one stays invisible to the other.
+ */
+const SOURCE_LAUNCH = basename(dirname(fileURLToPath(import.meta.url))) !== 'lib'
 
 /**
  * Run the public dsh command-line interface.
@@ -41,6 +55,7 @@ export async function runCli(): Promise<void> {
           fromDefaultProfile: invocation.fromDefaultProfile,
           patchFiles: invocation.patches,
           args: invocation.args,
+          resolutionMode: SOURCE_LAUNCH ? 'link' : 'runtime',
         })
       } catch (error) {
         if (!(error instanceof StartupError)) throw error
