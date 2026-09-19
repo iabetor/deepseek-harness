@@ -23,7 +23,7 @@
  * @module @deepseek-ai/dsh-client-modules
  */
 
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createRequire } from 'node:module'
@@ -563,8 +563,6 @@ export class ClientModuleRegistry extends Service {
   private readonly rebuildListeners = new Set<(id: string, rev: string) => void>()
   private readonly graphListeners = new Set<() => void>()
   private readonly dirty = new Set<string>()
-  private readonly initialRevisionNonce = randomBytes(8).toString('hex')
-  private nextInitialRevision = 0
   private responses = new Map<string, LazyResponse>()
   private batchResponses = new Map<string, LazyResponse>()
   /** One prior graph generation covers a request racing the HMR recomposition that replaced its URL. */
@@ -903,11 +901,6 @@ export class ClientModuleRegistry extends Service {
     }
   }
 
-  /** Allocate an opaque initial row revision without inspecting artifact bytes. */
-  private allocateInitialRevision(): string {
-    return `${this.initialRevisionNonce}-${String(this.nextInitialRevision++)}`
-  }
-
   /**
    * Read the activation-time bundle snapshot.
    * @param pkgName - package that declares the client bundle.
@@ -996,10 +989,19 @@ export class ClientModuleRegistry extends Service {
     const source = sources[0]
     if (source === undefined) return this.table.delete(packageName)
     if (this.table.get(packageName)?.sourceKey === source.sourceKey) return false
-    // The opaque initial rev rides the row until HMR observes a file change;
-    // a fiber restart from the same source reuses the existing row.
+    // The rev is derived from the artifact bytes, so it survives a Host restart
+    // unchanged. A process nonce here would instead give every row a new rev on
+    // every launch, and an already-open page reconciles the reconnected full
+    // graph by tearing down and re-importing every entry — including the
+    // bootstrap, whose replacement is refused (`requires a page reload`). That
+    // produced a blank page until the user reloaded manually, so the startup
+    // saving of not hashing is not worth it: hashing the pre-read bytes of every
+    // client bundle in this workspace costs ~3ms in total.
+    //
+    // `artifactRevision` (also used by `rebuilt`) frames bytes and mtime, so a
+    // rebuild that changes either one advances the rev exactly as HMR expects.
     const snapshot = this.initialBundleSnapshot(packageName, source.meta.clientPath)
-    const rev = this.allocateInitialRevision()
+    const rev = artifactRevision(snapshot.bundle, snapshot.baseline)
     this.table.set(packageName, {
       entry: graphRow(packageName, rev, source.meta),
       loaderName: source.loaderName,

@@ -429,7 +429,10 @@ describe('client bundle activation', () => {
     emitLoaderEntryChange(context, packageName)
     await Promise.resolve()
     expect(service.graph().entries.map(entry => entry.id)).toEqual([packageName])
-    expect(service.graph().entries[0]!.rev).not.toBe(firstRevision)
+    // The surviving source points at the same untouched artifact, so the
+    // content-derived revision is unchanged: switching which Loader entry wins
+    // is not a code change and must not look like one to an open page.
+    expect(service.graph().entries[0]!.rev).toBe(firstRevision)
     expect(service.clientPath(packageName)).toBe(clientPath)
   })
 
@@ -665,24 +668,48 @@ describe('client bundle activation', () => {
     expect((await routeRequest(route, third)).status).toBe(200)
   })
 
-  it('assigns opaque startup revisions instead of deriving them from artifact content', () => {
+  /**
+   * Startup revisions are content-derived so that a Host restart does not
+   * renumber every row.
+   *
+   * They used to be an opaque process nonce, which meant every launch handed an
+   * already-open page a graph whose every row looked new: the page tore down and
+   * re-imported every entry, hit the unreplaceable bootstrap, and blanked itself
+   * until the user reloaded by hand. Deriving the rev from the artifact bytes
+   * (the same function `rebuilt` uses) makes an unchanged bundle keep its rev
+   * across launches, so a reconnect is a no-op.
+   */
+  it('keeps startup revisions stable across constructions of unchanged artifacts', () => {
     const firstName = '@fixture/startup-revision-first'
     const secondName = '@fixture/startup-revision-second'
     writeBuiltPackage(firstName, {})
     writeBuiltPackage(secondName, {})
 
+    const first = construct([firstName, secondName]).graph().entries
+    // A second service over the same untouched files — what the next launch sees.
+    const second = construct([firstName, secondName]).graph().entries
+    expect(second.map(row => row.rev)).toEqual(first.map(row => row.rev))
+    // Distinct artifacts still get distinct revisions.
+    expect(first[0]!.rev).not.toBe(first[1]!.rev)
+
+    // Rewriting the bytes must move that row's revision.
     const service = construct([firstName, secondName])
-    const [first, second] = service.graph().entries
-    const firstMatch = /^(?<nonce>[a-f\d]{16})-(?<sequence>\d+)$/.exec(first!.rev)
-    const secondMatch = /^(?<nonce>[a-f\d]{16})-(?<sequence>\d+)$/.exec(second!.rev)
-    expect(firstMatch?.groups).toMatchObject({ sequence: '0' })
-    expect(secondMatch?.groups).toMatchObject({ nonce: firstMatch?.groups?.nonce, sequence: '1' })
-    const firstPath = service.clientPath(firstName)!
-    const firstStat = statSync(firstPath)
-    expect(service.artifactBaseline(firstName)).toEqual({
-      path: firstPath,
-      mtimeMs: firstStat.mtimeMs,
-      size: firstStat.size,
+    const before = service.graph().entries[0]!.rev
+    const clientPath = service.clientPath(firstName)!
+    writeFileSync(clientPath, 'module.exports = { changed: true }\n')
+    expect(service.rebuilt(firstName)).not.toBe(before)
+  })
+
+  it('reports the artifact baseline for a known row and nothing for an unknown one', () => {
+    const packageName = '@fixture/startup-baseline'
+    writeBuiltPackage(packageName, {})
+    const service = construct([packageName])
+    const clientPath = service.clientPath(packageName)!
+    const clientStat = statSync(clientPath)
+    expect(service.artifactBaseline(packageName)).toEqual({
+      path: clientPath,
+      mtimeMs: clientStat.mtimeMs,
+      size: clientStat.size,
     })
     expect(service.artifactBaseline('@fixture/unknown')).toBeUndefined()
   })
@@ -778,6 +805,11 @@ describe('client bundle activation', () => {
     expect((await routeRequest(route, `${row.url}&stale=1`.replace(`rev=${row.rev}`, 'rev=stale'))).status).toBe(404)
 
     writeFileSync(`${clientPath}.map`, '{"version":3,"names":[],"mappings":"AAAA","sources":["src/changed.tsx"]}\n')
+    // A real rebuild rewrites the entry too (the shared preset stamps it after
+    // every sibling output). A map-only edit must NOT advance the revision —
+    // documented as "source-map changes alone do not trigger a reload" — so the
+    // entry bytes change here to produce the new revision this asserts on.
+    writeFileSync(clientPath, 'module.exports = {}\n//# sourceMappingURL=client.js.map\n// rebuilt\n')
     const nextRev = service.rebuilt(packageName)
     expect(nextRev).not.toBe(row.rev)
     const nextRow = service.graph().entries[0]!

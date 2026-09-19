@@ -7,6 +7,7 @@
 import { stripClientSuffix } from './manifest.ts'
 import { ClientEntries } from './entries.ts'
 import { removeOwnedStyles } from './entry-lifecycle.ts'
+import type { Refusal } from './entries.ts'
 import type {
   BootManifest, BootModuleRow, ClientBundleRegistration, ClientBundleRequire, ClientModuleLoader, ClientModuleRecord,
   ClientModuleSystemOptions,
@@ -115,6 +116,7 @@ export class ClientModuleSystem implements ClientModuleLoader {
         this.invalidate(id, rev)
       },
       prune: (roots) => { this.prune(roots) },
+      preflight: manifest => this.preflight(manifest),
     })
     this.seed = new Map(Object.entries(options.staticModules))
     this.loadBundle = options.loadBundle ?? defaultLoadBundle
@@ -334,6 +336,41 @@ export class ClientModuleSystem implements ClientModuleLoader {
       }
     }
     this.manifest = manifest
+  }
+
+  /**
+   * The bootstrap row a graph cannot install, or undefined when it can.
+   *
+   * The bootstrap owns the module table and the `__ModuleLoader__` facade, so
+   * replacing it means replacing the machinery doing the replacing: no graph
+   * change can ever satisfy it in place. That much is unchanged, and the page
+   * still reports it and keeps running rather than navigating away — the user's
+   * in-progress work outlives a plugin rebuild, which the settings inventory
+   * spec and its golden file both pin.
+   *
+   * What changes is *when* it is decided. The guard used to fire from inside the
+   * replacement loop, so a `sync` reached it only after `updateManifest` had
+   * invalidated the other rows' factories and the removal loop had torn down
+   * unrelated fibers — the page lost working UI on the way to a refusal it could
+   * not avoid. Asking before reconciliation touches anything makes a refused
+   * graph a pure no-op.
+   * @param manifest - Graph a reconciliation is about to apply.
+   * @returns the refusal to report, or undefined when the graph is adoptable.
+   */
+  private preflight(manifest: BootManifest): Refusal | undefined {
+    const next = new Map(manifest.modules.map(row => [row.id, row.rev]))
+    for (const id of this.bootstrapIds) {
+      const previous = this.manifest.modules.find(row => row.id === id)
+      if (previous === undefined) continue
+      const rev = next.get(id)
+      if (rev === undefined) {
+        return { id, error: new Error(`client-modules: removing bootstrap module ${id} requires a page reload`) }
+      }
+      if (rev !== previous.rev) {
+        return { id, error: new Error(`client-modules: replacing bootstrap module ${id} requires a page reload`) }
+      }
+    }
+    return undefined
   }
 
   /** Retain live Loader modules and their transitive requests before evicting unreferenced graph records. */

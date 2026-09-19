@@ -81,6 +81,88 @@ function visible(id: string, effects: { mounted: number; disposed: number; hits:
 }
 
 describe('client manifest entries', () => {
+  /**
+   * The reconnect path of a Host restart, which is why the initial revisions are
+   * content-derived rather than per-process.
+   *
+   * A restart gave every row a different rev, so reconnecting (which replays the
+   * full graph) looked like "every plugin was rebuilt": the page tore down and
+   * re-imported each entry, hit the unreplaceable bootstrap, and reported the
+   * refusal with the UI already blanked — the user had to reload by hand. With
+   * content-derived revisions an unchanged bundle keeps its rev across launches,
+   * so the replayed graph is a no-op.
+   */
+  it('treats a reconnected graph as unchanged when the artifacts did not change', async () => {
+    const effects = { mounted: 0, disposed: 0, hits: 0 }
+    const boot = graph(row('bootstrap'), row('pet'))
+    const b = await bench(boot, { pet: visible('pet', effects) })
+    expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+
+    // Same graph a restarting Host composes for identical bytes.
+    await b.modules.entries.sync(boot)
+    expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+    expect(b.modules.entries.state.getSnapshot().failures).toEqual([])
+  })
+
+  /**
+   * The refused-graph diagnostic is a rendered contract, not an internal detail:
+   * the settings inventory prints `<id>: <message>`, and
+   * `apps/web/tests/expected/client-plugin-live/bootstrap-rebuild.expected.md`
+   * records that text. The browser e2e cannot run without Playwright installed,
+   * so the exact string is pinned here.
+   *
+   * `row('bootstrap')` is generic and the bench filters that id from the batch;
+   * the real modules bundle arrives through the HTML facade under its package id,
+   * which is what the guard keys on. This spec therefore names that id and marks
+   * it as the (already-materialized) bootstrap row.
+   */
+  it('reports a bootstrap refusal with the id and text the inventory renders', async () => {
+    const bootstrapId = '@deepseek-ai/dsh-client-modules'
+    const target: ClientModuleLoaderTarget = {
+      mode: 'queue', pendingQueue: [], load: () => {},
+      create: options => createClientModuleSystem(
+        target,
+        { id: bootstrapId, exports: { inject: ['loader'], apply: provideModules } },
+        options,
+      ),
+    }
+    const ctx = new Context()
+    contexts.push(ctx)
+    const modules = target.create({ boot: graph(row(bootstrapId)), staticModules: {} })
+    await ctx.plugin(Loader)
+    ctx.loader.internal = modules as never
+    await modules.entries.start(ctx.loader, modules.manifest)
+
+    await modules.entries.sync(graph(row(bootstrapId, 'other')))
+    expect(modules.entries.state.getSnapshot().failures).toEqual([{
+      id: bootstrapId,
+      message: `Error: client-modules: replacing bootstrap module ${bootstrapId} requires a page reload`,
+    }])
+  })
+
+  /**
+   * A refused graph must be a pure no-op.
+   *
+   * The bootstrap guard used to fire from inside the replacement loop, so the
+   * rows ahead of it had already been invalidated and torn down by the time the
+   * refusal surfaced. Nothing about a graph the page can never adopt justifies
+   * losing working UI, so the decision moved ahead of every mutation.
+   */
+  it('refuses an unsatisfiable graph without disturbing running entries', async () => {
+    const effects = { mounted: 0, disposed: 0, hits: 0 }
+    const b = await bench(graph(row('bootstrap'), row('pet')), { pet: visible('pet', effects) })
+    const fibers = [...b.ctx.loader.entries()].map(entry => entry.fiber)
+    // `pet` also changes, so a reconcile that ran would have replaced it.
+    await b.modules.entries.sync(graph(row('bootstrap', 'other'), row('pet', 'r1')))
+
+    expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+    expect([...b.ctx.loader.entries()].map(entry => entry.fiber)).toEqual(fibers)
+    expect(b.fetched).toEqual(['/batch'])
+    expect(b.modules.entries.state.getSnapshot().failures).toEqual([
+      { id: 'bootstrap', message: 'Error: client-modules: replacing bootstrap module bootstrap requires a page reload' },
+    ])
+  })
+
   it('adds, drains removal and re-enables one instance with styles; unrelated entries survive', async () => {
     const effects = { mounted: 0, disposed: 0, hits: 0 }
     const cleanup = deferred()
@@ -299,9 +381,15 @@ it('stops an obsolete multi-entry application after awaiting removal', async () 
 
 it('keeps bootstrap ownership explicit and diagnoses removal without changing entries', async () => {
   const b = await bench(graph(row('bootstrap')), {})
-  await expect(b.modules.entries.sync(graph())).rejects.toThrow('removing bootstrap module')
+  await b.modules.entries.sync(graph())
+  // Refused up front, keyed by the refusing row so diagnostics name it, and the
+  // running entry is untouched.
+  expect(b.modules.entries.state.getSnapshot().failures).toEqual([
+    { id: 'bootstrap', message: 'Error: client-modules: removing bootstrap module bootstrap requires a page reload' },
+  ])
   expect([...b.ctx.loader.entries()].map(entry => entry.options.name)).toEqual(['bootstrap'])
   expect(b.modules.entries.state.getSnapshot().syncing).toBe(false)
+  // Re-adopting the bootstrap graph clears the failure.
   await b.modules.entries.sync(graph(row('bootstrap')))
   expect(b.modules.entries.state.getSnapshot().failures).toEqual([])
 })
@@ -463,6 +551,8 @@ it.each(['graph', 'rebuilt'])('preserves bootstrap and dependent fibers when a %
   const exports = await b.modules.import('bootstrap')
   if (source === 'graph') await b.modules.entries.sync(graph(row('bootstrap', 'r1'), row('consumer')))
   else await expect(b.modules.entries.reload('bootstrap', 'r1')).rejects.toThrow('requires a page reload')
+  // The failure names the refusing row, and a retry of the same doomed graph
+  // reports it again without ever touching the running fibers.
   for (let retry = 0; retry < 2; retry++) {
     await b.modules.entries.retry()
     expect(b.modules.entries.state.getSnapshot().failures).toEqual([

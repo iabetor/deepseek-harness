@@ -70,7 +70,7 @@ interface WebBootGraph {
 }
 ```
 
-每个初始 row 的 `rev` 都是不透明的进程 nonce 加序号，因此组合图时不会哈希每个插件产物。HMR 观察到 bundle 变化后，该 row 的 revision 才改为新可执行字节的哈希。初始 descriptor 把 row 划入 bootstrap 与 application 两个调度阶段，每个阶段都可以包含多条 descriptor。URL 只含有序 package 资源列表和从这些 row revision 派生的 revision，阶段名不会进入路由。图组合保持 row 顺序，并在 map 形式 URL 超过 3 KiB 前贪心切分，不拼接脚本，也不读取 map。图 revision 对 entry 与 batch descriptor 求哈希。`immediately` 标记第一阶段的 registration barrier；同一 combo 中的 row 共享脚本传输，不同 combo 则独立加载。
+每个初始 row 的 `rev` 对该 row 的产物字节与其 stat 时间戳求哈希——与 HMR 在重建后使用的派生方式相同，因此未变动的 bundle 跨 Host 启动保持同一 revision。它此前是不透明的进程 nonce 加序号，导致每次启动都给所有 row 重新编号：已打开的页面随即收到一份"每个 entry 都像被重建过"的完整图，在走向不可替换的 bootstrap 必然产生的拒绝途中把那些 entry 拆掉，并一直丢失可用 UI，直到用户手动刷新。对 Node 半侧本来就要读取的快照求哈希，在本工作区的 client bundle 上约需 3ms，换来的是重连即空操作。HMR 观察到 bundle 变化后，该 row 的 revision 才改为新可执行字节的哈希。初始 descriptor 把 row 划入 bootstrap 与 application 两个调度阶段，每个阶段都可以包含多条 descriptor。URL 只含有序 package 资源列表和从这些 row revision 派生的 revision，阶段名不会进入路由。图组合保持 row 顺序，并在 map 形式 URL 超过 3 KiB 前贪心切分，不拼接脚本，也不读取 map。图 revision 对 entry 与 batch descriptor 求哈希。`immediately` 标记第一阶段的 registration barrier；同一 combo 中的 row 共享脚本传输，不同 combo 则独立加载。
 
 ## 扫描
 

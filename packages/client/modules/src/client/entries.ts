@@ -14,11 +14,31 @@ export interface ClientEntryState {
   readonly failures: readonly { readonly id: string; readonly message: string }[]
 }
 
+/** One graph row this running page can never adopt, so reconciliation must refuse it. */
+export interface Refusal {
+  /** Graph row that cannot be replaced in place. */
+  id: string
+  /** The error the refusal reports, verbatim as the call sites report it. */
+  error: Error
+}
+
 /** Module-table capabilities used within serialized entry operations. */
 interface ModuleIndex {
   update(manifest: BootManifest, managed: Iterable<string>): void
   invalidateForReplacement(id: string, rev: string): void
   prune(roots: Iterable<string>): void
+  /**
+   * A row no graph change can ever install into this page, asked **before**
+   * reconciliation mutates anything.
+   *
+   * The bootstrap owns the module table and the `__ModuleLoader__` facade, so it
+   * is the one row whose replacement is impossible in place. Discovering that
+   * only when its turn comes in the replacement loop means earlier rows have
+   * already been torn down on the way to a refusal they cannot avoid — the page
+   * loses working UI for a graph it was never going to accept. Asking first
+   * keeps a refused graph a pure no-op.
+   */
+  preflight(manifest: BootManifest): Refusal | undefined
 }
 
 /** Numeric values mirror Cordis's const enum, which bundle loaders cannot import as a runtime object. */
@@ -129,6 +149,10 @@ export class ClientEntries {
         return
       }
       if (this.revisions.get(id) === rev) return
+      // No preflight here: `replace` refuses the bootstrap as its very first
+      // step, before it invalidates or tears anything down, so this path already
+      // fails without collateral damage. The rejection and the page-local
+      // failure string are part of the settings inventory contract.
       this.publish({ syncing: true, failures: this.snapshot.failures.filter(failure => failure.id !== id) })
       await this.replace(entry, id, rev, this.generation)
       this.publish({ syncing: false, failures: this.snapshot.failures })
@@ -194,6 +218,20 @@ export class ClientEntries {
     const loader = this.loader
     if (loader === undefined) throw new Error('client-modules: entries have not started')
     const manifest = this.desired
+    // A graph this page can never adopt is refused **here**, before `index.update`
+    // invalidates factories and before the removal loop tears any fiber down.
+    // The refusal throws the same error the replacement loop would have thrown,
+    // so the reported failure text is unchanged; only the collateral damage is
+    // gone. Worth doing because an unsatisfiable graph used to cost the page its
+    // working UI on the way to a refusal it could not avoid.
+    const refusal = this.index.preflight(manifest)
+    if (refusal !== undefined) {
+      // Reported, not thrown: the failure must carry the refusing row's id (the
+      // settings inventory keys on it), which the queue's own catch — keyed by
+      // operation, not by row — cannot supply.
+      this.publish({ syncing: false, failures: [{ id: refusal.id, message: String(refusal.error) }] })
+      return
+    }
     this.publish({ syncing: true, failures: [] })
     const failures: { id: string; message: string }[] = []
     this.index.update(manifest, this.managed.keys())
