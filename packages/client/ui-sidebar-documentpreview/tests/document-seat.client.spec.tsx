@@ -86,6 +86,8 @@ async function boot() {
             data-renderer-path={resource.value?.absolutePath} data-renderer-version={resource.value?.version}
           >
             {props.content.kind === 'text' ? props.content.text : props.content.kind === 'bytes' ? new TextDecoder().decode(props.content.data) : 'renderer'}
+            {/* A body that wrote to the file asks the owner to re-read it. */}
+            <button type="button" data-renderer-reload onClick={() => { props.reload() }} />
           </div>
         )
       },
@@ -174,5 +176,32 @@ describe('document extension seat', () => {
     await act(async () => { await remove!() })
     await waitFor(() => { expect(h.view.container.querySelector('[data-document-markdown]')).not.toBeNull() })
     expect(h.read).toHaveBeenCalledOnce()
+  })
+
+  it('lets a document body re-read the file it changed, without the manual reload bar', async () => {
+    // A renderer that changed the file itself (an editor, or a change overlay
+    // applying or reverting a hunk) holds content the shell has already
+    // superseded. Calling props.reload() rides the shell's own re-read path, so
+    // the pages and the change bar settle together without a click.
+    const h = await boot()
+    h.register('reload-reader', 'text-pages', 'extension')
+    h.open('notes.md')
+    await waitFor(() => { expect(h.view.container.querySelector('[data-renderer="reload-reader"]')?.textContent).toBe('first\nsecond') })
+    expect(h.read).toHaveBeenCalledTimes(1)
+    // The file changed on disk after the renderer wrote it, so the shell sees a
+    // new version and would raise the bar.
+    h.read.mockImplementation(async (_sessionId, _path, range) => ({
+      ok: true,
+      value: { absolutePath: '/host/notes', version: 'v2', bytes: 18, offset: range.offset ?? 1, text: 'rewritten', lines: 1, eof: true },
+    }))
+    await act(async () => { h.rt.ctx.resources.source('dsh-resource://file/session/documents/notes.md') })
+    // The renderer reports its own write, so content and version advance together.
+    await act(async () => {
+      fireEvent.click(h.view.container.querySelector('[data-renderer-reload]')!)
+    })
+    await waitFor(() => { expect(h.read).toHaveBeenCalledTimes(2) })
+    expect(h.read).toHaveBeenLastCalledWith(SESSION, 'notes.md', { offset: 1 }, expect.any(AbortSignal))
+    await waitFor(() => { expect(h.view.container.querySelector('[data-renderer="reload-reader"]')?.textContent).toBe('rewritten') })
+    expect(h.view.container.querySelector('[data-textpreview-changed]')).toBeNull()
   })
 })

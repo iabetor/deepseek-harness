@@ -77,6 +77,7 @@ async function bench(
   })),
   listed: Record<string, {
     updatedAt: number
+    blank?: boolean
     origin?: 'subagent'
     parentId?: SessionId
     projectionValues?: { title?: string | null }
@@ -391,6 +392,38 @@ describe('candidates', () => {
         name: 'same',
         description: '(no cwd) · 3d',
       }),
+    ])
+  })
+
+  it('drops a blank Session row even when the host candidate listing offered it', async () => {
+    const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
+    const sessions = vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [
+        {
+          sessionId: sid('blank'),
+          label: 'Blank run',
+          sameWorkspace: false,
+          createdAt: CREATED_AT,
+          mention: '@[Blank run](dsh-session:InBsYW5rIik)',
+        },
+        {
+          sessionId: sid('engaged'),
+          label: 'Engaged run',
+          sameWorkspace: false,
+          createdAt: CREATED_AT,
+          mention: '@[Engaged run](dsh-session:InVuZ2FnZWQp)',
+        },
+      ],
+    }))
+    // The list knows the blank Session carries no conversation; the client
+    // filter is the defense in depth on top of the host-side exclusion.
+    const { source } = await bench(files, sessions, {
+      blank: { updatedAt: UPDATED_AT, blank: true },
+      engaged: { updatedAt: UPDATED_AT, blank: false },
+    })
+    await expect(source.candidates(session, request('run'))).resolves.toEqual([
+      expect.objectContaining({ name: 'Engaged run' }),
     ])
   })
 

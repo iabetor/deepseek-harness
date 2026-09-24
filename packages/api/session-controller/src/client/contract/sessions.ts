@@ -138,6 +138,14 @@ export interface ISessions {
     allowMigration?: boolean
   }): Promise<SessionId>
   /**
+   * Physically destroy a Session's durable log on the Host (idempotent for an
+   * absent id). Refused while the Session is still active; callers should stop
+   * the running Agent first.
+   * @param sessionId - Session to delete.
+   * @throws when the delete fails (including an active-session rejection).
+   */
+  delete(sessionId: SessionId): Promise<void>
+  /**
    * Borrow an already-retained Agent-scoped Context without extending its lifetime.
    * @param id - session id.
    * @returns the live scoped Context, or undefined without a retained generation.
