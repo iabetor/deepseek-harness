@@ -82,6 +82,7 @@ export const VIEWER_ENDPOINT_CLASSES = {
   // No reader role names these and no plugin offers them today, so the conservative class is
   // owner-only. A plugin that intends to expose one reclassifies it as 'plugin-offered', which still
   // only makes it eligible for the declaration path; the owner's per-share selection is the grant.
+  'session/delete': 'owner-only', // erasing a Session's durable log is irreversible; the owner performs it, never a share reader
   'account/ackBonusNotified': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/cancelSignIn': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/getBalance': 'owner-only', // owner account and sign-in; the served page never reads it

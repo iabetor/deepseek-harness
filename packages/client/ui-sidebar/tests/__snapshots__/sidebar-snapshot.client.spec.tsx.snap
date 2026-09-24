@@ -141,16 +141,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
                 class="localBuildBrand copyVersion"
                 data-copy-version="true"
               >
-                <span
-                  class="localBuildTitle"
-                >
-                  DSH Local Build
-                </span>
-                <span
-                  class="buildVersion"
-                >
-                  1.2.3-rc.4-abc1234-dirty
-                </span>
+                Workbench
               </span>
             </div>
           </span>
@@ -389,16 +380,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
                 class="localBuildBrand copyVersion"
                 data-copy-version="true"
               >
-                <span
-                  class="localBuildTitle"
-                >
-                  DSH Local Build
-                </span>
-                <span
-                  class="buildVersion"
-                >
-                  1.2.3-rc.4-abc1234-dirty
-                </span>
+                Workbench
               </span>
             </div>
           </span>
@@ -533,16 +515,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
                 class="localBuildBrand copyVersion"
                 data-copy-version="true"
               >
-                <span
-                  class="localBuildTitle"
-                >
-                  DSH 本地构建
-                </span>
-                <span
-                  class="buildVersion"
-                >
-                  1.2.3-rc.4-abc1234-dirty
-                </span>
+                工作台
               </span>
             </div>
           </span>

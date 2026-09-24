@@ -122,13 +122,18 @@ describe('session rename through the assembled browser', () => {
     fireEvent.click(trigger)
     await view.findByRole('menuitem', { name: '置顶会话' })
     expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '置顶会话', '重命名', '分叉会话', '复制 Session ID', 'Export action', 'Last action', '归档会话',
+      '置顶会话', '重命名', '分叉会话', '复制 Session ID', 'Export action', 'Last action', '归档会话', '删除会话',
     ])
-    expect(view.getAllByRole('separator')).toHaveLength(3)
+    // delete carries its own separatorBefore, so the menu now shows four rules.
+    expect(view.getAllByRole('separator')).toHaveLength(4)
     const last = view.getByRole('menuitem', { name: 'Last action' })
     const exportRow = view.getByRole('menuitem', { name: 'Export action' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'End' })
+    // delete lands after every legacy component row, so End reaches it first.
+    const deleteRow = view.getByRole('menuitem', { name: '删除会话' })
+    expect(document.activeElement).toBe(deleteRow)
+    fireEvent.keyDown(deleteRow, { key: 'ArrowUp' })
     const archive = view.getByRole('menuitem', { name: '归档会话' })
     expect(document.activeElement).toBe(archive)
     fireEvent.keyDown(archive, { key: 'ArrowUp' })

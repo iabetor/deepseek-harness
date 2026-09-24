@@ -2,9 +2,11 @@
 import { contextMenuHook } from '@deepseek-ai/dsh-client-test-runtime'
 /**
  * The shipped Session row actions rendered directly with hand-built props:
- * the menu rows, hover buttons, dialogs, and global notices. Every action
- * reads its own injected hooks and calls its own injected callbacks;
- * what those callbacks do is apply.client.spec's
+ * the pin, rename, fork, archive, session-id, and delete menu rows, the
+ * archive and pin hover buttons, and the `shell.overlay` surfaces they raise
+ * (rename dialog, archive confirmation, delete confirmation, row notice).
+ * Every action reads its own injected hooks and calls its own injected
+ * callbacks; what those callbacks do is apply.client.spec's
  * subject. The browser and the slot machinery stay out; the assembled
  * chain lives in rename-assembly.client.spec.
  */

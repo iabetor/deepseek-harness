@@ -1331,6 +1331,31 @@ describe('SessionStore', () => {
     expect(ctx.sessions.get(SessionId('lifecycle'))).toBeUndefined()
   })
 
+  it('expel() force-removes a live entry, emits its disposal when announced, and is a no-op otherwise', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const disposed: string[] = []
+    ctx.on('session/disposed', session => void disposed.push(session.id))
+
+    // An announced entry is removed and its paired session/disposed is emitted.
+    const live = ctx.sessions.prepare(SessionId('expelled'))
+    ctx.sessions.enter(live)
+    ctx.sessions.announce(live)
+    expect(ctx.sessions.expel(SessionId('expelled'))).toBe(true)
+    expect(ctx.sessions.get(SessionId('expelled'))).toBeUndefined()
+    expect(disposed).toEqual(['expelled'])
+
+    // An unknown id has no entry to remove: cold/archived ids are safe to expel.
+    expect(ctx.sessions.expel(SessionId('cold'))).toBe(false)
+
+    // An entered-but-unannounced entry is removed without a disposal event.
+    const quiet = ctx.sessions.prepare(SessionId('quiet'))
+    ctx.sessions.enter(quiet)
+    expect(ctx.sessions.expel(SessionId('quiet'))).toBe(true)
+    expect(ctx.sessions.get(SessionId('quiet'))).toBeUndefined()
+    expect(disposed).toEqual(['expelled'])
+  })
+
   it('prevents simultaneous attachment of one session object to two stores', async () => {
     const firstCtx = new Context()
     const secondCtx = new Context()

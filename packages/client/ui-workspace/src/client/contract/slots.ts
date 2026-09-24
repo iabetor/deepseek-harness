@@ -422,6 +422,43 @@ export interface ForkSessionInjected {
   forkSession: (sessionId: SessionId) => void
 }
 
+/**
+ * Delete action share (menu row and hover button). Deletion destroys the
+ * durable log for good, so the callbacks only raise the confirmation request
+ * and run it; the dialog entry owns the in-flight and failure state.
+ */
+export interface DeleteSessionInjected {
+  /** Ask for the destructive delete confirmation for this row. */
+  requestSessionDelete: (sessionId: SessionId, displayTitle: string) => void
+}
+
+/** A Session delete the delete action asked for; the dialog entry opens on it. */
+export interface SessionDeleteConfirmRequest {
+  /** Session to physically destroy. */
+  sessionId: SessionId
+  /** The row's display title, named in the dialog. */
+  displayTitle: string
+}
+
+/** Injected share of the delete confirmation entry: the request slot and the runner. */
+export interface SessionDeleteConfirmInjected {
+  hooks: {
+    /** The pending delete confirmation, or null. */
+    request: HostObservable<SessionDeleteConfirmRequest | null>
+  }
+  /** Run the destruction for the pending request. */
+  deleteSession: (sessionId: SessionId) => Promise<void>
+  /** Close the pending request without deleting. */
+  settleSessionDelete: () => void
+}
+
+/** Props of the delete confirmation entry in `shell.overlay`. */
+export type SessionDeleteConfirmProps =
+  PropsRuntime<'shell.overlay'>
+  & PropsLocale<'workspace'>
+  & Omit<SessionDeleteConfirmInjected, 'hooks'>
+  & PropsHooks<SessionDeleteConfirmInjected['hooks']>
+
 /** Rename action share: the row only raises the request; the dialog entry answers it. */
 export interface RenameSessionInjected {
   /** Ask for the rename dialog, seeded with the row's current title. */
