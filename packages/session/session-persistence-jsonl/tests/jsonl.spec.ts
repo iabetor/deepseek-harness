@@ -1484,7 +1484,9 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
   it('destroy refuses a session this process still owns a pending creator for', async () => {
     const m = meta('pending-writer', '/work')
-    const owner = ctx.sessionPersistence as JsonlSessionPersistence
+    // The backend class is not exported as a type; this test only reads the
+    // pending-creator tracker, so it narrows to that member instead.
+    const owner = ctx.sessionPersistence as unknown as { hasPendingSession(id: string): boolean }
     // Another process publishes this id's artifact while our creator has not
     // flushed yet: our pending entry would resurrect the artifact on its next
     // write, so destruction must refuse rather than race that flush.

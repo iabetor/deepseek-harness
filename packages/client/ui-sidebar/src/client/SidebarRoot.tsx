@@ -250,7 +250,6 @@ export function SidebarRoot({
     }
   }, [pointerInside])
 
-  const buildVersion = localBuildVersion()
   // The local-build fallbacks copy the badge text; the brand button below
   // skips New Session for clicks inside them. The click still bubbles, so
   // document-level outside-click listeners see it.

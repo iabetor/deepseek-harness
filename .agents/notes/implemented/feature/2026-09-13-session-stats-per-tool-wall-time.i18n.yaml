@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-13-session-stats-per-tool-wall-time.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-13-session-stats-per-tool-wall-time.md
+/agent-note-session-stats-carry-a-per-tool-wall-time-breakdown:
+  en: 18d68b3c3a7bab95
+  zh: 64af1589cf599922
+/agent-note-session-stats-carry-a-per-tool-wall-time-breakdown/problem:
+  en: bff54eaf11e817af
+  zh: 1fa6cebc3e0fa7fc
+/agent-note-session-stats-carry-a-per-tool-wall-time-breakdown/decision:
+  en: 476732ef628fa89b
+  zh: 17d88f762fcd5add
+/agent-note-session-stats-carry-a-per-tool-wall-time-breakdown/alternatives-considered:
+  en: e9868354c5d34747
+  zh: 764b6a4b3051b41c
+/agent-note-session-stats-carry-a-per-tool-wall-time-breakdown/consequences:
+  en: 663f54d30d046956
+  zh: 70a00f18b5fbcbb9
