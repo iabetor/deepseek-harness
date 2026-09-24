@@ -263,6 +263,62 @@ describe('SessionProjectionCache write policy', () => {
     expect((await storedRows(root, id))?.['cache-test/marks']?.val).toEqual({ marks: ['live'] })
   })
 
+  it('removes the stored checkpoint when the Session log is physically destroyed', async () => {
+    const { ctx, root } = await harness()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const id = SessionId('destroyed')
+    const created = whenWritten(ctx, id)
+    const session = ctx.sessions.create(id)
+    await created
+    mark(session, ['before-delete'])
+    // turn/end forces a mandatory write, so the checkpoint is on the medium
+    // before the destruction event arrives.
+    const written = whenWritten(ctx, id)
+    endTurn(session)
+    await written
+    expect((await storedRows(root, id))?.['cache-test/marks']?.val).toEqual({ marks: ['before-delete'] })
+
+    // session.delete announces the destruction; the checkpoint must not
+    // outlive the log it was derived from.
+    ctx.emit('sessionPersistence:deleted', id)
+    await vi.waitFor(async () => { expect(await storedRecord(root, id)).toBeUndefined() })
+  })
+
+  it('contains a failed ghost cleanup the way every other cache write is contained', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-projcache-'))
+    roots.push(root)
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(Storage)
+    await ctx.plugin({ name: storageJsonName, inject: storageJsonInject, apply: storageJsonApply, Config: storageJsonConfig }, { root })
+    await ctx.plugin({ name: storageDomainName, inject: storageDomainInject, apply: storageDomainApply, Config: storageDomainConfig }, { backend: 'json' })
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
+    ctx.sessionProjections.register(marksUnit())
+    await ctx.plugin(SessionProjectionCache, { writeEveryEvents: 100, writeIntervalMs: 60_000 })
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    // Land a real checkpoint first: the domain's delete short-circuits an
+    // unknown key, so a record must exist for removal to be attempted.
+    const id = SessionId('ghost-fail-soft')
+    const created = whenWritten(ctx, id)
+    const session = ctx.sessions.create(id)
+    await created
+    mark(session, ['stored'])
+    const written = whenWritten(ctx, id)
+    endTurn(session)
+    await written
+    // Replacing the record document with a directory makes the removal fail.
+    await rm(recordPath(root, id), { force: true })
+    await mkdir(recordPath(root, id), { recursive: true })
+
+    // The destruction event is fire-and-forget: announce it and observe the
+    // warn, proving the failure never reaches the event path as a throw.
+    ctx.emit('sessionPersistence:deleted', id)
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(`deleting checkpoint for destroyed session "${id}" failed`))
+    }, { timeout: 5_000 })
+  })
+
   it('flushes when the in-turn event count reaches the configured threshold', async () => {
     const { ctx, root } = await harness({ config: { writeEveryEvents: 3, writeIntervalMs: 60_000 } })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

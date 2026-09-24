@@ -72,7 +72,7 @@ export function OfficeBody(props: OfficeBodyProps): ReactNode {
   return <div className={css.body}>
     {props.renderSlot('sidebar.right.tab.document.office.pdf', {
       resourceAddress, content: { kind: 'bytes', data: file.data }, wrap: props.wrap, scrollportRef: props.scrollportRef,
-      addResource: props.addResource, setResources: props.setResources,
+      addResource: props.addResource, setResources: props.setResources, reload: props.reload,
     }, { entryKey: '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/office', hookContext: props.useTabInfo })}
   </div>
 }

@@ -153,6 +153,7 @@ class FakeSessions implements ISessions {
     return reference
   })
   readonly subagentAddress = vi.fn<ISessions['subagentAddress']>()
+  readonly delete: ReturnType<typeof vi.fn<ISessions['delete']>>
   declare readonly using: ISessions['using']
   declare readonly retainInfo: ISessions['retainInfo']
   declare readonly searchResultLimit: ISessions['searchResultLimit']
@@ -167,6 +168,13 @@ class FakeSessions implements ISessions {
     this.list = new MutableSource(initial)
     this.create = vi.fn<ISessions['create']>(async options =>
       options?.sessionId ?? sid(`created-${String(options?.workspaceId ?? 'none')}`))
+    this.delete = vi.fn<ISessions['delete']>(async (sessionId) => {
+      this.list.update(state => ({
+        ...state,
+        ids: state.ids.filter(id => id !== sessionId),
+        byId: Object.fromEntries(Object.entries(state.byId).filter(([id]) => id !== sessionId)),
+      }))
+    })
   }
 }
 
@@ -299,6 +307,12 @@ function bench(options: BenchOptions = {}) {
     notify,
   )
   return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify }
+}
+
+/** Settle the queued bootstrap microtask and the promises it chained. */
+async function flush(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 describe('UiWorkspaceService', () => {
@@ -1109,5 +1123,123 @@ describe('UiWorkspaceService', () => {
     await expect(b.uiWorkspace.createDirectory('/home/u', 'new')).rejects.toMatchObject({
       rpcError: { code: 'directory-picker/exists' },
     })
+  })
+
+  it('deleting the current Session navigates to the Workspace most recent remaining Session', async () => {
+    const current = summary('current', { cwd: '/w/one', updatedAt: 10 })
+    const newer = summary('newer', { cwd: '/w/one', updatedAt: 20 })
+    const older = summary('older', { cwd: '/w/one', updatedAt: 5 })
+    persistSelection({ sessionId: current.id })
+    const b = bench({
+      sessions: sessionState([current, newer, older]),
+      workspaces: workspaceState([workspace('one', [current.id, newer.id, older.id])]),
+    })
+    b.uiWorkspace.openSession(current.id)
+
+    await b.uiWorkspace.deleteSession(current.id)
+    await flush()
+    expect(b.sessions.delete).toHaveBeenCalledWith(current.id)
+    // Recency wins over list position: newer (20) beats older (5).
+    expect(b.sessions.retain).toHaveBeenLastCalledWith(newer.id, { source: 'mainView' })
+    expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('deleting a non-current Session never moves the stage', async () => {
+    const current = summary('current', { cwd: '/w/one', updatedAt: 10 })
+    const other = summary('other', { cwd: '/w/one', updatedAt: 20 })
+    const b = bench({
+      sessions: sessionState([current, other]),
+      workspaces: workspaceState([workspace('one', [current.id, other.id])]),
+    })
+    b.uiWorkspace.openSession(current.id)
+
+    await b.uiWorkspace.deleteSession(other.id)
+    await flush()
+    // Only the original selection was ever retained, and it stays released.
+    expect(b.sessions.retain).toHaveBeenCalledOnce()
+    expect(b.sessions.retained[0]!.reference.sessionId).toBe(current.id)
+    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
+  })
+
+  it('deleting the current Session falls back to a fresh Session when none remains', async () => {
+    const current = summary('current', { cwd: '/w/one', updatedAt: 10 })
+    const b = bench({
+      sessions: sessionState([current]),
+      workspaces: workspaceState([workspace('one', [current.id])]),
+    })
+    b.uiWorkspace.openSession(current.id)
+    b.sessions.create.mockImplementation(async options => sid(`opened-${String(options?.workspaceId)}`))
+
+    await b.uiWorkspace.deleteSession(current.id)
+    await vi.waitFor(() => {
+      expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('opened-one'), { source: 'mainView' })
+    })
+    expect(b.sessions.create).toHaveBeenCalledWith({ workspaceId: wid('one') })
+  })
+
+  it('deleting the current Session reuses an unarchived member blank when nothing engaged remains', async () => {
+    const current = summary('current', { cwd: '/w/one', updatedAt: 10 })
+    const blank = summary('blank', { blank: true, cwd: '/w/one' })
+    persistSelection({ sessionId: current.id })
+    const b = bench({
+      sessions: sessionState([current, blank]),
+      workspaces: workspaceState([workspace('one', [current.id, blank.id])]),
+    })
+    b.uiWorkspace.openSession(current.id)
+
+    await b.uiWorkspace.deleteSession(current.id)
+    await flush()
+    // connectWorkspace reuses the member blank rather than minting a new
+    // Session: the create call carries that blank's own id.
+    expect(b.sessions.create).toHaveBeenCalledWith({ workspaceId: wid('one'), sessionId: blank.id })
+  })
+
+  it('deleting an ungrouped current Session navigates to the recent Workspace', async () => {
+    const current = summary('current', { updatedAt: 10 })
+    const recent = summary('recent', { cwd: '/w/recent', updatedAt: 20 })
+    persistSelection({ sessionId: current.id })
+    const b = bench({
+      sessions: sessionState([current, recent]),
+      workspaces: workspaceState([workspace('recent', [recent.id])]),
+    })
+    b.uiWorkspace.openSession(current.id)
+
+    await b.uiWorkspace.deleteSession(current.id)
+    await flush()
+    expect(b.sessions.retain).toHaveBeenLastCalledWith(recent.id, { source: 'mainView' })
+    expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('deleting the current Session with nothing to navigate to stays empty', async () => {
+    const current = summary('current', { updatedAt: 10 })
+    const b = bench({
+      sessions: sessionState([current]),
+      workspaces: workspaceState([]),
+    })
+    b.uiWorkspace.openSession(current.id)
+
+    await b.uiWorkspace.deleteSession(current.id)
+    await flush()
+    // No destination exists, so the destroyed selection is released to settle
+    // the stage on the empty state rather than inventing a Session.
+    expect(b.sessions.retain).toHaveBeenCalledOnce()
+    expect(b.sessions.create).not.toHaveBeenCalled()
+    expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
+  })
+
+  it('preserves delete failures without navigating', async () => {
+    const current = summary('current', { cwd: '/w/one', updatedAt: 10 })
+    const b = bench({
+      sessions: sessionState([current]),
+      workspaces: workspaceState([workspace('one', [current.id])]),
+    })
+    b.uiWorkspace.openSession(current.id)
+    b.sessions.delete.mockRejectedValueOnce(new Error('session/active: stop it first'))
+
+    await expect(b.uiWorkspace.deleteSession(current.id)).rejects.toThrow('session/active')
+    // The failed delete leaves the selection intact.
+    expect(b.sessions.retain).toHaveBeenCalledOnce()
+    expect(b.sessions.retained[0]!.reference.sessionId).toBe(current.id)
+    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
   })
 })

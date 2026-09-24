@@ -14,6 +14,7 @@ import {
   logPath, parseGenerationLogFilename, projectDir, projectKey, scanLog, sessionDir, SessionLogScanner,
   toHeaderLine,
 } from '../src/format.ts'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import {
   runPersistenceContract, meta, oneTurnLog, releasedV1OneTurnLog,
 } from '../../session-persistence/tests/contract.ts'
@@ -1367,6 +1368,51 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     expect((await stat(rawLogPath(root, '/work', m.id))).isFile()).toBe(true)
     expect((await ctx.sessionPersistence.list()).map(s => s.header.id)).toContain(m.id)
     await handle.close()
+  })
+
+  it('destroy removes the session directory and its artifacts, idempotent for an absent id', async () => {
+    const m = meta('destroyed', '/work')
+    const handle = await ctx.sessionPersistence.create(m)
+    await handle.append(oneTurnLog())
+    await handle.close()
+    const dir = sessionDir(root, '/work', m.id)
+    await expect(stat(dir)).resolves.toBeDefined()
+
+    await ctx.sessionPersistence.destroy(m.id)
+    // The whole per-session directory is gone, not just the log file.
+    await expect(stat(dir)).rejects.toThrow()
+    expect((await ctx.sessionPersistence.list()).map(x => x.header.id)).not.toContain(m.id)
+
+    // Idempotent: destroying an id with no located artifact resolves.
+    await expect(ctx.sessionPersistence.destroy(m.id)).resolves.toBeUndefined()
+    await expect(ctx.sessionPersistence.destroy(SessionId('never-stored'))).resolves.toBeUndefined()
+  })
+
+  it('destroy refuses a session this process still owns a pending creator for', async () => {
+    const m = meta('pending-writer', '/work')
+    const owner = ctx.sessionPersistence as JsonlSessionPersistence
+    // Another process publishes this id's artifact while our creator has not
+    // flushed yet: our pending entry would resurrect the artifact on its next
+    // write, so destruction must refuse rather than race that flush.
+    const handle = await ctx.sessionPersistence.create(m)
+    expect(owner.hasPendingSession(m.id)).toBe(true)
+    const elsewhere = new Context()
+    try {
+      await elsewhere.plugin(JsonlSessionPersistence, { root, compression: 'none' })
+      const writer = await elsewhere.sessionPersistence.create(m)
+      await writer.append(oneTurnLog())
+      await writer.close()
+    } finally {
+      await elsewhere.fiber.dispose()
+    }
+    await expect(stat(rawLogPath(root, '/work', m.id))).resolves.toBeDefined()
+    await expect(ctx.sessionPersistence.destroy(m.id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
+
+    // Closing our creator releases the pending entry, and destruction proceeds.
+    await handle.close()
+    expect(owner.hasPendingSession(m.id)).toBe(false)
+    await expect(ctx.sessionPersistence.destroy(m.id)).resolves.toBeUndefined()
+    await expect(stat(sessionDir(root, '/work', m.id))).rejects.toThrow()
   })
 
   it('flush materializes an explicitly durable empty session without an event row', async () => {

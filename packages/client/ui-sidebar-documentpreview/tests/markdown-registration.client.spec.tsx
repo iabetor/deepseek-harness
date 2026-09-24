@@ -70,6 +70,7 @@ describe('Markdown implementation registration', () => {
           wrap: false,
           scrollportRef: vi.fn(),
           addResource: vi.fn(), setResources: vi.fn(),
+          reload: vi.fn(),
         }, {
           entryKey: MARKDOWN_BODY_ID,
           hookContext: useTabInfo,

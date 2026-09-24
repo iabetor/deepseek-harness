@@ -311,7 +311,7 @@ export class TestSessions implements ISessions {
 
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
-    method: 'create' | 'refreshProjections' | 'refresh' | 'search' | 'fork'
+    method: 'create' | 'delete' | 'refreshProjections' | 'refresh' | 'search' | 'fork'
     args: unknown[]
   }[] = []
 
@@ -680,6 +680,22 @@ export class TestSessions implements ISessions {
   fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId> {
     this.calls.push({ method: 'fork', args: [opts] })
     return Promise.resolve(opts.sessionId)
+  }
+
+  /**
+   * Recorded delete stub: the call is observed and resolved (benches asserting
+   * the full delete flow drive the production service; this face only proves
+   * the call and removes the row from the list snapshot).
+   * @param sessionId - session id.
+   */
+  delete(sessionId: SessionId): Promise<void> {
+    this.calls.push({ method: 'delete', args: [sessionId] })
+    this.list.update((draft) => {
+      const { [sessionId]: _removed, ...rest } = draft.byId
+      draft.byId = rest
+      draft.ids = draft.ids.filter(id => id !== sessionId)
+    })
+    return Promise.resolve()
   }
 
   /**

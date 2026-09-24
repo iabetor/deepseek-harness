@@ -565,6 +565,21 @@ export class SessionManager {
   }
 
   /**
+   * Contract session.delete; on success clear the local row immediately. The
+   * host also broadcasts `api-session/removed`, which re-runs this removal, so
+   * the double application is idempotent.
+   * @param sessionId - Session to physically destroy.
+   * @returns the delete result.
+   */
+  async delete(
+    sessionId: SessionId,
+  ): Promise<RemoteResult<{ deleted: true }>> {
+    const result = await this.remote.session.delete({ sessionId })
+    if (result.ok) this.handleSessionRemoved(sessionId)
+    return result
+  }
+
+  /**
    * Merge a Host summary, replacing live state and filling missing metadata.
    * Local create/fork placeholders only fill metadata on an existing row.
    */
