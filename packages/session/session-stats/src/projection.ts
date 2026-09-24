@@ -1,7 +1,7 @@
 /**
  * The `sessionStats` projection unit: a pure fold of step boundaries, stream
  * embedded streams, tool pairs, and assembled assistant messages into whole-log counts
- * and wall times.
+ * and wall times, plus the tool wall time split by tool name.
  *
  * `step/end` — not `assistant/message` — is the counted step event because it
  * is the step lifecycle authority: the loop appends exactly one per entered
@@ -16,17 +16,19 @@
  * token is the first non-empty delta chunk and survives an in-step
  * `llm/retry`, decode spans first token → assembled message on steps that
  * also report output tokens, and tool time pairs `tool/call` → `tool/result`
- * by callId. A cancelled step assembles no message, so its partial stream
- * time stays uncounted in every time figure — matching the window, which
- * renders it as an untimed interrupted node.
+ * by callId. Each matched pair also adds its delta under the call's `name`,
+ * so the breakdown partitions `toolMs` exactly. A cancelled step assembles no
+ * message, so its partial stream time stays uncounted in every time figure —
+ * matching the window, which renders it as an untimed interrupted node.
  *
  * @module @deepseek-ai/dsh-session-stats/projection
  */
 
 import { z } from 'zod'
+import type { ZodType } from 'zod'
 import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
-
+import type { SessionStatsToolTotal } from './types.ts'
 
 /** Accumulated whole-log figures (the view is exactly these totals). */
 interface SessionStatsTotals {
@@ -38,6 +40,8 @@ interface SessionStatsTotals {
   llmMs: number
   /** Summed matched tool call→result wall time, ms. */
   toolMs: number
+  /** Per-tool-name split of `toolMs`, settled pairs counts included; sorted by descending `ms`. */
+  tools: readonly SessionStatsToolTotal[]
   /** Summed first-token latency over `ttftSteps`, ms. */
   ttftMs: number
   /** Steps carrying a recorded first token. */
@@ -52,15 +56,17 @@ interface SessionStatsTotals {
  * Fold state: the totals plus the in-flight boundaries they accrue from.
  * Turn numbers are host-assigned and monotonic per session, so a single
  * `lastTurn` slot decides "first closed step of a new turn"; the state is
- * plain JSON per the unit contract (persisted-cache precondition).
+ * plain JSON per the unit contract (persisted-cache precondition). The tool
+ * breakdown lives in `tools` itself rather than a name-keyed map, so each
+ * event updates only the entry it settles and the fold never rescans the log.
  */
 interface SessionStatsState extends SessionStatsTotals {
   /** Turn of the last counted `step/end`; null before the first. */
   lastTurn: number | null
   /** The open step's boundary facts; null outside a step or after its message assembled. */
   openStep: { turn: number; step: number; startTime: number; firstTokenTime: number | null } | null
-  /** Dispatch times of tool calls whose result has not landed, by callId. */
-  pendingCalls: Record<string, number>
+  /** Dispatch time and tool name of calls whose result has not landed, by callId. */
+  pendingCalls: Record<string, { time: number; name: string }>
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
@@ -69,11 +75,31 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   }
 }
 
+const sessionStatsToolTotalSchema = z.object({
+  name: z.string(),
+  calls: z.number().int().nonnegative(),
+  ms: z.number().nonnegative(),
+}).strict()
+
+/** Wire breakdown check: the ranked list clients render is strictly descending by `ms`. */
+const sessionStatsToolsSchema: ZodType<readonly SessionStatsToolTotal[]> = z.array(sessionStatsToolTotalSchema)
+  .superRefine((tools, context) => {
+    let previous = Number.POSITIVE_INFINITY
+    for (const tool of tools) {
+      if (tool.ms > previous) {
+        context.addIssue({ code: 'custom', message: 'session stats tools must be sorted by descending ms' })
+        return
+      }
+      previous = tool.ms
+    }
+  })
+
 const sessionStatsSchema = z.object({
   turns: z.number().int().nonnegative(),
   steps: z.number().int().nonnegative(),
   llmMs: z.number().nonnegative(),
   toolMs: z.number().nonnegative(),
+  tools: sessionStatsToolsSchema,
   ttftMs: z.number().nonnegative(),
   ttftSteps: z.number().int().nonnegative(),
   decodeMs: z.number().nonnegative(),
@@ -94,8 +120,37 @@ const sessionStatsStateSchema = sessionStatsSchema.extend({
     startTime: z.number().nonnegative(),
     firstTokenTime: z.number().nonnegative().nullable(),
   }).nullable(),
-  pendingCalls: z.record(z.string(), z.number().nonnegative()),
+  pendingCalls: z.record(z.string(), z.object({
+    time: z.number().nonnegative(),
+    name: z.string(),
+  }).strict()),
 })
+
+/**
+ * Add one settled pair's wall time under its tool name, keeping the ranking
+ * descending by `ms`. A new name is appended and an updated one keeps its
+ * slot, so the stable sort leaves equal totals in first-settlement order and
+ * a replay over the same log reproduces the same array. The list holds one
+ * entry per distinct tool name, so this touches only that list, never the
+ * event log.
+ * @param tools - the current ranked breakdown.
+ * @param name - the settled call's `tool/call` name.
+ * @param delta - the pair's wall time in ms.
+ * @returns the next ranked breakdown.
+ */
+function accrueToolTotal(
+  tools: readonly SessionStatsToolTotal[],
+  name: string,
+  delta: number,
+): readonly SessionStatsToolTotal[] {
+  const existing = tools.find(tool => tool.name === name)
+  const next = existing === undefined
+    ? [...tools, { name, calls: 1, ms: delta }]
+    : tools.map(tool => tool.name === name
+      ? { name, calls: tool.calls + 1, ms: tool.ms + delta }
+      : tool)
+  return next.toSorted((left, right) => right.ms - left.ms)
+}
 
 /**
  * Provider-reported completion tokens, guarded the way the window fold guards
@@ -112,13 +167,14 @@ function usageOutputTokens(usage: unknown): number | null {
 /** The `sessionStats` unit registered on `ctx.sessionProjections` (exported for the unit spec). */
 export const sessionStatsProjectionDefinition = {
   key: 'sessionStats',
-  stateVersion: 1,
+  stateVersion: 2,
   stateSchema: sessionStatsStateSchema,
   init: () => ({
     turns: 0,
     steps: 0,
     llmMs: 0,
     toolMs: 0,
+    tools: [],
     ttftMs: 0,
     ttftSteps: 0,
     decodeMs: 0,
@@ -165,7 +221,13 @@ export const sessionStatsProjectionDefinition = {
         return next
       }
       case 'tool/call':
-        return { ...state, pendingCalls: { ...state.pendingCalls, [event.data.callId]: event.time } }
+        return {
+          ...state,
+          pendingCalls: {
+            ...state.pendingCalls,
+            [event.data.callId]: { time: event.time, name: event.data.name },
+          },
+        }
       case 'tool/result': {
         // Own-key check: callId is provider-minted (model/tool JSON boundary),
         // so a prototype property name ('constructor', 'toString') on a result
@@ -177,7 +239,13 @@ export const sessionStatsProjectionDefinition = {
         const pendingCalls = Object.fromEntries(
           Object.entries(state.pendingCalls).filter(([id]) => id !== callId),
         )
-        return { ...state, toolMs: state.toolMs + Math.max(0, event.time - dispatched), pendingCalls }
+        const delta = Math.max(0, event.time - dispatched.time)
+        return {
+          ...state,
+          toolMs: state.toolMs + delta,
+          tools: accrueToolTotal(state.tools, dispatched.name, delta),
+          pendingCalls,
+        }
       }
       case 'step/end':
         return {
@@ -203,6 +271,7 @@ export const sessionStatsProjectionDefinition = {
       steps: state.steps,
       llmMs: state.llmMs,
       toolMs: state.toolMs,
+      tools: state.tools,
       ttftMs: state.ttftMs,
       ttftSteps: state.ttftSteps,
       decodeMs: state.decodeMs,
