@@ -267,6 +267,12 @@ export function presentGrepResult(
 /**
  * Register the `grep` tool and its scope-aware system-prompt guidance.
  *
+ * The guidance answers measured waste: a recorded session piped a recursive
+ * shell `grep` across a 25 GB workspace root containing a 13 GB `.git`, which
+ * took over 60 s, where the same search through this tool — ripgrep, which
+ * honors ignore rules — returned in 58 ms. The prompt states the consequence
+ * rather than the benchmark, because the model needs the rule, not the numbers.
+ *
  * @param ctx - the plugin context; registrations are effects scoped to it, and
  *   execution uses its `subprocess` service.
  * @param caps - the deployment's resolved grep caps (plugin config after defaulting).
@@ -277,7 +283,8 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
     order: ctx.systemPrompt.getSectionOrder('TOOL_GREP'),
     text: ({ scope }) => ctx.tools.get('grep', scope) === undefined
       ? ''
-      : 'Use the grep tool — not shell grep or rg — to search file contents.'
+      : 'Use the grep tool — not shell grep or rg — to search file contents. '
+        + 'A recursive shell search reads every byte it can reach, including version-control and build directories this tool skips, so it is far slower on a large tree.'
         + (ctx.tools.get('read', scope) === undefined ? '' : ' Use read on a matched file when you need surrounding context.'),
   })
 
