@@ -3484,7 +3484,13 @@ export interface Config {
 export interface Config {
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
-  /** Include optional runtime-context snapshots in model history (default true); required context remains. */
+  /**
+   * Include the harness-owned execution discipline in the
+   * `harness:operating-guidance` section (default true). A deployment that owns
+   * a byte-exact prompt turns it off.
+   */
+  includeOperatingGuidance?: boolean
+  /** Include dynamic runtime-context snapshots in model history (default true). */
   includeRuntimeContext?: boolean
   /**
    * Deployment-wide persona prefix template before first-party guidance. A scoped section named
@@ -3506,7 +3512,8 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-system-prompt -->
 
-<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-terminal-bash -->
+来源： [`packages/core/system-prompt/src/index.ts:277`](../packages/core/system-prompt/src/index.ts)
+
 <a id="deepseek-aidsh-terminal-bash"></a>
 
 ## `@deepseek-ai/dsh-terminal-bash`

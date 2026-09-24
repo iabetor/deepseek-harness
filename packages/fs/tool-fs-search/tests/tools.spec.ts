@@ -1238,9 +1238,22 @@ async function guidanceScope(ctx: Context) {
   return { key, scope }
 }
 
+// The paragraph each tool's system-prompt section contributes.
+//
+// `glob` states only what the tool is for: its pattern semantics, result
+// ordering, and what it skips live in its own `description` and parameters,
+// where the model reads them beside the call it is about to make.
+//
+// `grep` also carries the cost of the habit it replaces. A recursive shell
+// search reads every byte it can reach — version-control and build
+// directories included — so the comparison belongs in the prompt, not only in
+// the tool's own description: it is the reason to reach for this tool instead
+// of the shell at all.
 const originalSearchGuidance = {
   glob: 'Use the glob tool — not shell find — to discover files by path pattern.',
-  grep: 'Use the grep tool — not shell grep or rg — to search file contents. Use read on a matched file when you need surrounding context.',
+  grep: 'Use the grep tool — not shell grep or rg — to search file contents. '
+      + 'A recursive shell search reads every byte it can reach, including version-control and build directories this tool skips, so it is far slower on a large tree.'
+      + ' Use read on a matched file when you need surrounding context.',
 }
 
 describe('scope-aware search guidance', () => {
@@ -1279,7 +1292,10 @@ describe('scope-aware search guidance', () => {
   })
 })
 
-/** Preserve the default persona and exact section separators in the oracle. */
+/** The harness-owned execution discipline every assembly renders after the identity. */
+const OPERATING_GUIDANCE = "A command that already failed for an environmental reason \u2014 a missing dependency, browser, or credential \u2014 fails the same way again. Do not rerun it to confirm the failure: report the limitation instead, or state what changed before retrying. When a command's duration is unknown or long, run it in the background so independent work continues while it runs. Capture a long command's output in a file before filtering it, so that asking a second question about the output never costs a second run. Issue independent tool calls in one step instead of one per step: calls whose results do not depend on each other cost their full latency again when serialized, and reading or searching several things at once answers in a single round trip."
+
+/** Preserve the default opener, guidance, and exact section separators in the oracle. */
 function withPersona(...sections: string[]): string {
-  return ['You are an AI agent powered by DeepSeek Harness.', ...sections].join('\n\n')
+  return ['You are an AI agent powered by DeepSeek Harness.', OPERATING_GUIDANCE, ...sections].join('\n\n')
 }
