@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package gives clients whole-session turn and step counts plus LLM, tool, first-token, and decode wall times through the public `sessionStats` value. The figures come from the complete durable log, so paging and compaction do not change them. Use it when a client must display consistent conversation statistics across reloads and reduced history. When whole-session statistics are unavailable, clients can use window-scoped counting instead.
+This package gives clients whole-session turn and step counts plus LLM, tool, first-token, and decode wall times through the public `sessionStats` value, including a per-tool-name breakdown of the tool time. The figures come from the complete durable log, so paging and compaction do not change them. Use it when a client must display consistent conversation statistics across reloads and reduced history. When whole-session statistics are unavailable, clients can use window-scoped counting instead.
 
 ## Table of Contents
 
@@ -43,10 +43,11 @@ Mount the plugin beside the session store and the projection registry when clien
 | `steps` | Closed steps — completed, failed, cancelled, and max-tokens steps all count |
 | `llmMs` | Summed model wall time over steps that assembled a message |
 | `toolMs` | Summed matched `tool/call` → `tool/result` wall time |
+| `tools` | Per-tool-name breakdown of `toolMs`: `{ name, calls, ms }` entries, ranked by descending `ms` |
 | `ttftMs` / `ttftSteps` | Summed first-token latency and the steps carrying it |
 | `decodeMs` / `decodeTokens` | Summed decode wall time and provider output tokens over usage-reporting steps |
 
-Every field is 0 until its first contributing event; the composed registry always serves the key, so clients read the value rather than key presence. Clients render whole-log figures through the projection seam's snapshot and change feed; the reference consumer is the web chat stats strip, whose window fold mirrors these field names as its no-unit fallback.
+Every field is 0 (and `tools` empty) until its first contributing event; the composed registry always serves the key, so clients read the value rather than key presence. A `tools` entry exists only for a tool name with at least one settled pair, and its `name` is the verbatim `tool/call` payload — never a display label, so the client localizes nothing about it and renders unknown names as written. Clients render whole-log figures through the projection seam's snapshot and change feed; the reference consumer is the web chat stats strip, whose window fold mirrors these field names as its no-unit fallback.
 
 ### Failures and recovery
 
@@ -76,14 +77,14 @@ The unit is a pure fold over committed session events: `step/end` is the counted
 
 ### Data model
 
-The fold state holds the eight totals plus in-flight boundaries: `lastTurn` (turn of the last counted `step/end`), `openStep` (the open step's boundary facts, closed by its `assistant/message`), and `pendingCalls` (tool dispatch times by callId). The wire view is a strict subset — the eight totals — so the persisted-cache state schema extends the view schema with the boundary fields.
+The fold state holds the eight totals — the tool breakdown rides the `tools` total — plus in-flight boundaries: `lastTurn` (turn of the last counted `step/end`), `openStep` (the open step's boundary facts, closed by its `assistant/message`), and `pendingCalls` (dispatch time and `tool/call` name by callId). The wire view is a strict subset — the eight totals — so the persisted-cache state schema extends the view schema with the boundary fields.
 
 ### Fold rules
 
 - Uninteresting events return the same state reference; the registry's `Object.is` gate keeps the change feed quiet.
 - First-token latency records the first non-empty delta chunk and survives an in-step `llm/retry`.
 - Decode time and tokens accrue only over steps carrying both a first token and a valid provider usage report; malformed usage is ignored like the window fold guards node usage.
-- Tool time pairs `tool/call` → `tool/result` by callId; unresolved calls are dropped at `turn/end` because results land within their turn, and a callId colliding with an `Object` prototype name reads as unmatched.
+- Tool time pairs `tool/call` → `tool/result` by callId and books the same delta under the call's recorded `name`; the ranked `tools` list is updated in place, so the fold never replays the log and a matched pair's two figures always agree. Unresolved calls are dropped at `turn/end` because results land within their turn, so they add nothing to `tools`; a callId colliding with an `Object` prototype name reads as unmatched.
 
 </details>
 
@@ -118,6 +119,7 @@ These limits define what the figures describe and when the unit is absent. They 
 
 - **Steps count work attempted, not visible output** — a step that failed before producing visible content still closes with `step/end` and counts; a step interrupted by a crash counts after the session reloads, when crash recovery appends its synthetic `step/end`.
 - **A cancelled step is counted but untimed** — no assistant message assembles, so its partial stream time enters no wall-time figure; a max-tokens usage-host message conversely contributes model time the surface does not show.
+- **A tool name is whatever the call logged** — `tools` keys on the `tool/call` name, so a renamed or aliased tool reports separately, a call that never settled is absent rather than zero, and sub-call dispatches inside one tool (PTC) stay in the parent call's figure.
 - **Counts are log-scoped, not surface-scoped** — steps whose messages were later compacted away stay counted; the figures describe the whole session, not the current model-visible surface.
 - **Mounted only where the projection registry is composed** — other assemblies serve no `sessionStats` key, and their consumers fall back to window-scoped counting.
 
