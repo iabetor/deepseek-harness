@@ -246,7 +246,6 @@ export function SidebarRoot({
       && event.clientY >= rect.top && event.clientY < rect.bottom)
   }
 
-  const buildVersion = localBuildVersion()
   // The local-build fallbacks copy the badge text; the brand button below
   // skips New Session for clicks inside them. The click still bubbles, so
   // document-level outside-click listeners see it.
