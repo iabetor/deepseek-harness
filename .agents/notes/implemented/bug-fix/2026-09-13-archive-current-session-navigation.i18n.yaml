@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-13-archive-current-session-navigation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-13-archive-current-session-navigation.md
+/agent-note-archive-current-session-navigation:
+  en: 50d6fb0fba3463ab
+  zh: ca73dedaaf9af26f
+/agent-note-archive-current-session-navigation/problem:
+  en: 5cabe2fda6d0ecae
+  zh: e04c3361f9af5ed6
+/agent-note-archive-current-session-navigation/decision:
+  en: 151b7e35f268f400
+  zh: fe78c7f819af4888
+/agent-note-archive-current-session-navigation/alternatives-considered:
+  en: 8e4b633dca72dbb3
+  zh: 3b1cbcfb7ca37339
+/agent-note-archive-current-session-navigation/consequences:
+  en: 936cb869f6b73e45
+  zh: e666a550b23fcc48

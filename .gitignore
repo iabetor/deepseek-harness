@@ -40,6 +40,7 @@ apps/web/dist/
 .artifacts/
 .dsh-build/
 .dsh-report/
+.dsh/
 .playwright-mcp/
 .orig
 .worktrees/
@@ -47,3 +48,5 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 native/system/test/bin/
+.workbuddy/
+_tmp_*
