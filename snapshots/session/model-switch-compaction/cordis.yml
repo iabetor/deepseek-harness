@@ -16,7 +16,7 @@
 - id: compaction-basic
   config:
     thresholdRatio: 0.8
-    headroomTokens: 1800
+    headroomTokens: 1000
     retainTokens: 20
     maxTokens: 32
 
