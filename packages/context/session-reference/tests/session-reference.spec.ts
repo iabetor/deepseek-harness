@@ -1337,4 +1337,24 @@ describe('session reference discovery and preparation', () => {
     await defaultCtx.plugin(TestSessionQueryEngine)
     expect(() => new SessionReferenceResolver(defaultCtx)).not.toThrow()
   })
+
+  it('excludes a physically deleted session from candidate listing', async () => {
+    const ctx = await harness()
+    const target = ctx.sessions.create(brandString<SessionId>('target'), { meta: { cwd: '/same' } })
+    const victim = ctx.sessions.create(brandString<SessionId>('victim'), { meta: { cwd: '/same', createdAt: 20 } })
+    victim.append('turn/start', { turn: 1 })
+    withProjectionCache(ctx, {})
+
+    // Before deletion the victim is a discoverable candidate.
+    await expect(ctx.sessionReferenceResolver.listCandidates(fakeAgent(target)))
+      .resolves.toContainEqual(expect.objectContaining({ sessionId: victim.id }))
+
+    // The host destroys the durable log and broadcasts the deletion.
+    ctx.emit('sessionPersistence:deleted', victim.id)
+
+    const after = await ctx.sessionReferenceResolver.listCandidates(fakeAgent(target))
+    expect(after.find(c => c.sessionId === victim.id)).toBeUndefined()
+    // No other sessions remain discoverable besides the target itself.
+    expect(after).toEqual([])
+  })
 })

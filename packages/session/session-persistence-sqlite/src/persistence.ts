@@ -202,5 +202,27 @@ export class SqliteSessionPersistence extends SessionPersistence {
     return [...entries.filter(entry => !known.has(entry.header.id)), ...segmented]
   }
 
+  /**
+   * Destroy one Session's durable log.
+   *
+   * The Recorded Segment backend keeps append-only frames behind a schema
+   * trigger (`frames are append-only`), so it cannot remove a stored Session
+   * and refusing is the only honest answer. Absence stays a no-op so callers
+   * may destroy without probing first; the refusal names the backend so an
+   * operator can move the Session out by dropping its segment database.
+   * @param id - the persisted Session whose durable log would be destroyed.
+   * @param options - optional cancellation.
+   */
+  async destroy(id: SessionId, options?: SessionPersistenceStatOptions): Promise<void> {
+    options?.signal?.throwIfAborted()
+    const snapshot = await this.selected(id, options?.signal)
+    options?.signal?.throwIfAborted()
+    if (snapshot === undefined) return
+    throw new HarnessError(
+      `Recorded Segment Session "${id}" cannot be destroyed: this backend stores append-only frames`,
+      'SESSION_DESTROY_UNSUPPORTED',
+    )
+  }
+
   async flush(): Promise<void> { await this.sqlite.flush() }
 }

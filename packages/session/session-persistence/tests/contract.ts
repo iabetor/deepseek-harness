@@ -136,8 +136,15 @@ function secondTurn(startSeq = 6): SessionEvent[] {
  * fresh backend over fresh, empty storage each call.
  * @param name - suite label, e.g. `jsonl-none` / `sqlite`.
  * @param make - factory producing one fresh {@link ContractBackend} per test.
+ * @param options - backend limits: `destroy` is false for a backend whose
+ *   storage keeps append-only frames and therefore refuses the seam's
+ *   `destroy`; the suite then asserts that refusal instead of removal.
  */
-export function runPersistenceContract(name: string, make: () => Promise<ContractBackend>): void {
+export function runPersistenceContract(
+  name: string,
+  make: () => Promise<ContractBackend>,
+  options: { readonly destroy?: boolean } = {},
+): void {
   describe(`SessionPersistence contract: ${name}`, () => {
     it('round-trips through one write handle: append, self-read, offset/length defaults', async () => {
       const { persistence, dispose } = await make()
@@ -265,6 +272,46 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         await writer.append(secondTurn())
         expect((await writer.read()).events.map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
         await writer.close()
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('destroy physically removes the session and its events, idempotent for an absent id', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        // Idempotent: destroying an unknown id is a no-op, never an error.
+        await persistence.destroy(brandString<SessionId>('absent'))
+
+        if (options.destroy === false) {
+          // A backend that keeps append-only frames refuses removal for a
+          // stored Session rather than pretending it succeeded.
+          const kept = meta('no-destroy', '/work')
+          const handle = await persistence.create(kept)
+          await handle.append(oneTurnLog())
+          await handle.close()
+          await expect(persistence.destroy(kept.id)).rejects.toMatchObject({
+            code: 'SESSION_DESTROY_UNSUPPORTED',
+          })
+          expect((await persistence.list()).map(x => x.header.id)).toContain(kept.id)
+          return
+        }
+
+        const m = meta('del', '/work')
+        const creator = await persistence.create(m)
+        await creator.append(oneTurnLog())
+        await creator.close()
+        expect((await persistence.list()).map(x => x.header.id)).toContain(m.id)
+        expect(await persistence.stat(m.id)).toBeDefined()
+
+        // Destruction removes the header and every event from the durable store.
+        await persistence.destroy(m.id)
+        expect((await persistence.list()).map(x => x.header.id)).not.toContain(m.id)
+        expect(await persistence.stat(m.id)).toBeUndefined()
+        await expect(persistence.open(m.id, 'read')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+
+        // Re-destroy is still a no-op.
+        await persistence.destroy(m.id)
       } finally {
         await dispose()
       }

@@ -7,11 +7,12 @@ import type { MenuContribution, ContextMenuTargetMap } from '@deepseek-ai/dsh-cl
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-session-status/client'
 import type {
-  ArchiveSessionInjected, ForkSessionInjected, PinSessionInjected, RenameSessionInjected, SessionIdInjected,
+  ArchiveSessionInjected, DeleteSessionInjected, ForkSessionInjected, PinSessionInjected, RenameSessionInjected,
+  SessionIdInjected,
 } from '../contract/slots.ts'
 
 type Actions = Omit<PinSessionInjected & ArchiveSessionInjected, 'hooks'>
-  & ForkSessionInjected & RenameSessionInjected & SessionIdInjected
+  & ForkSessionInjected & RenameSessionInjected & SessionIdInjected & DeleteSessionInjected
   & { readonly markSession: (sessionId: SessionId, unread: boolean) => void }
 
 /**
@@ -83,4 +84,13 @@ export function registerSessionMenus(ctx: Context, actions: Actions): void {
       run: () => { (restoring ? actions.unarchiveSession : actions.archiveSession)(target.sessionId) },
     }]
   })
+  // Erasing the durable log is irreversible, so the row is danger-styled and
+  // gated on `session/delete` alone: a share reader never receives that grant.
+  // `afterContent` puts it below every legacy component row a plugin contributes,
+  // so the destructive verb always sits last regardless of plugin orders.
+  register('delete', 700, ['session/delete'], target => allowed(target, 'session/delete') ? [{
+    id: 'delete', label: t('menu.deleteSession'), icon: { key: 'workspace.delete' },
+    danger: true, separatorBefore: true, afterContent: true,
+    run: () => { actions.requestSessionDelete(target.sessionId, target.displayTitle) },
+  }] : [])
 }

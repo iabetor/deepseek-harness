@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session, SessionHeader } from '@deepseek-ai/dsh-session'
@@ -51,6 +52,7 @@ class HeaderPersistence extends SessionPersistence {
     options?.signal?.throwIfAborted()
     return Promise.resolve(this.headers.map(header => ({ header, revision: SessionPersistenceRevision(`rev-${header.id}`) })))
   })
+  override destroy = vi.fn((): Promise<void> => Promise.reject(new Error('listing must not destroy a stored Session')))
 }
 
 class ListingQuery extends SessionQueryEngine {
@@ -228,10 +230,10 @@ describe('read-only Session list tools', () => {
 
   it('filters archive status and subagents before sorting and pagination; pins do not reorder results', async () => {
     const mounted = await mount({
-      headers: [header('z', 100), header('b', 100), header('a', 100), header('archived', 500), header('child', 200, { origin: 'subagent', parentSession: SessionId('z') })],
+      headers: [header('z', 100), header('b', 100), header('a', 100), header('archived', 500), header('child', 200, { origin: 'subagent', parentSession: brandString<SessionId>('z') })],
       archived: ['archived'],
     })
-    await mounted.ctx.workspaceRegistry.pinSession(SessionId('z'))
+    await mounted.ctx.workspaceRegistry.pinSession(brandString<SessionId>('z'))
     expect(value(await mounted.call('list_session', { limit: 1, offset: 1 }))).toEqual([item('b', 100)])
     expect(value(await mounted.call('list_session'))).toEqual([item('a', 100), item('b', 100), item('z', 100)])
     expect(value(await mounted.call('list_session', { archived: true }))).toEqual([item('archived', 500)])
@@ -255,8 +257,8 @@ describe('read-only Session list tools', () => {
         header('parent', 10, { cwd: path }),
         header('member', 20, { cwd: path }),
         header('same-cwd', 30, { cwd: path }),
-        header('child', 40, { cwd: path, origin: 'subagent', parentSession: SessionId('parent') }),
-        header('assigned-child', 50, { cwd: path, origin: 'subagent', parentSession: SessionId('parent') }),
+        header('child', 40, { cwd: path, origin: 'subagent', parentSession: brandString<SessionId>('parent') }),
+        header('assigned-child', 50, { cwd: path, origin: 'subagent', parentSession: brandString<SessionId>('parent') }),
         header('other-member', 60, { cwd: otherPath }),
       ],
       workspaces: [

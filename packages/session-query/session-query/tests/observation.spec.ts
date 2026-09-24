@@ -516,6 +516,8 @@ describe('SessionObservationReader cold path', () => {
       list(): Promise<readonly SessionPersistenceSnapshot[]> {
         return Promise.resolve([])
       }
+
+      destroy(): Promise<void> { return Promise.resolve() }
     }
 
     const ctx = await readerContext()

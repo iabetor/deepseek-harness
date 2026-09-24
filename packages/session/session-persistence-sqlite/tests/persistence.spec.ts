@@ -18,7 +18,8 @@ runPersistenceContract('sqlite', async () => {
       return { persistence: reopened.persistence, dispose: () => reopened.context.fiber.dispose() }
     },
   }
-})
+  // `frames are append-only` is a schema trigger, so this backend refuses removal.
+}, { destroy: false })
 
 describe('SQLite persistence plugin', () => {
   it('registers the service before creating the database and initializes on first create', async () => {

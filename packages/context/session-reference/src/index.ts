@@ -13,8 +13,8 @@ import { TextSearchIndex, type SearchKeys } from '@deepseek-ai/dsh-util-text-sea
 import { createUserMessage, freezeMessage, LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, LlmCallConfig, LlmResolvedModelInfo, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-// Type-only: the `title` projection key plus the live registry and durable
-// cache Context merges — the two projection faces discovery labels from.
+// Type-only: the live registry and durable cache Context merges are the two
+// projection faces discovery labels from.
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import type {} from '@deepseek-ai/dsh-session-title'
@@ -71,6 +71,15 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionReferenceResolver: SessionReferenceResolver
   }
+  interface Events {
+    /**
+     * A Session's durable log was physically destroyed; drop any reference
+     * candidates and snapshot data that pointed at it.
+     * @param sessionId - destroyed Session identity.
+     * @mode emit
+     */
+    'sessionPersistence:deleted'(sessionId: SessionId): void
+  }
 }
 
 interface PreparedSource {
@@ -117,6 +126,9 @@ export class SessionReferenceResolver extends TypertRemoteService {
   /** The latest candidate search index; each discovery call updates it with the complete current list. */
   private candidateIndex: TextSearchIndex<LabelledCandidate> | undefined
 
+  /** Session ids physically destroyed since this resolver started; excluded from candidate listing. */
+  private _deleted: Set<SessionId>
+
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'sessionReferenceResolver')
     this.config = {
@@ -146,6 +158,14 @@ export class SessionReferenceResolver extends TypertRemoteService {
         'SESSION_REFERENCE_INVALID_CONFIG',
       )
     }
+    // Defense in depth: a physically deleted Session must never resurface as a
+    // reference candidate. The query corpus drops the live entry on delete and
+    // the projection cache evicts on session/disposed, but track deletions here
+    // too so candidate listing cannot offer a Session whose durable log is gone.
+    this._deleted = new Set<SessionId>()
+    ctx.on('sessionPersistence:deleted', (sessionId: SessionId) => {
+      this._deleted.add(sessionId)
+    })
     ctx.on('agent/pre-step', async ({ agent, signal, modelSelection }, next): Promise<PreStepDecision> => {
       const decision = await next()
       if (decision.kind === 'reject') return decision
@@ -225,6 +245,10 @@ export class SessionReferenceResolver extends TypertRemoteService {
     assertNotCancelled(signal)
     const records = (await settleWithCancellation(this.ctx.sessionQuery.listSessions(signal), signal))
       .filter(record => record.header.id !== agent.id)
+      // Defense in depth: a physically deleted Session must never resurface as
+      // a reference candidate (the query corpus drops it, the projection cache
+      // evicts it, and this filter covers the gap before either settles).
+      .filter(record => !this._deleted.has(record.header.id))
       .map(record => ({ record }))
     const labelled = this.projectedLabels(records)
     // Discovery runs at keystroke rate: each call updates the previous call's
