@@ -219,8 +219,8 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-api-session-controller`
 
-- `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `remoteAccess` · `sessions` · `sessionProjections` · `sessionQuery` · `typert` · `workspaceRegistry`
-- `source`: [`packages/api/session-controller/src/index.ts:94`](../packages/api/session-controller/src/index.ts)
+- `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `remoteAccess` · `sessions` · `sessionPersistence` · `sessionProjections` · `sessionQuery` · `typert` · `workspaceRegistry`
+- `source`: [`packages/api/session-controller/src/index.ts:96`](../packages/api/session-controller/src/index.ts)
 
 ```ts config-catalog
 /** Session Controller deployment policy. */
@@ -2846,7 +2846,7 @@ export type JsonlCompression = 'zstd' | 'none'
 ## `@deepseek-ai/dsh-session-projection-cache`
 
 - `inject`: `storageDomain` · `sessionProjections` · `sessions`
-- `source`: [`packages/session/session-projection-cache/src/index.ts:75`](../packages/session/session-projection-cache/src/index.ts)
+- `source`: [`packages/session/session-projection-cache/src/index.ts:84`](../packages/session/session-projection-cache/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -2872,7 +2872,7 @@ export interface Config {
 
 - `inject`: `sessions`
 - `refs`: [`SessionQueryConfig`](../packages/session-query/session-query/src/index.ts)
-- `source`: [`packages/session-query/session-query-sqlite/src/index.ts:92`](../packages/session-query/session-query-sqlite/src/index.ts)
+- `source`: [`packages/session-query/session-query-sqlite/src/index.ts:101`](../packages/session-query/session-query-sqlite/src/index.ts)
 
 ```ts config-catalog
 /** Combined session-query configuration backed by SQLite full-text search. */
@@ -3541,7 +3541,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-system-prompt`
 
-- `source`: [`packages/core/system-prompt/src/index.ts:258`](../packages/core/system-prompt/src/index.ts)
+- `source`: [`packages/core/system-prompt/src/index.ts:288`](../packages/core/system-prompt/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
@@ -3576,8 +3576,7 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-system-prompt -->
 
-Source: [`packages/core/system-prompt/src/index.ts:277`](../packages/core/system-prompt/src/index.ts)
-
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-terminal-bash -->
 <a id="deepseek-aidsh-terminal-bash"></a>
 
 ## `@deepseek-ai/dsh-terminal-bash`
