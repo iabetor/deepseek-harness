@@ -38,7 +38,17 @@ const COLLAPSE_SETTLE_MS = 150
  */
 const SCROLLBAR_LINGER_MS = 2000
 
-/** Format complete-build metadata for the local brand badge. */
+/**
+ * Format complete-build metadata for the version badge.
+ *
+ * The brand name says which build this is; the badge says exactly which one, so
+ * a person reporting a problem can name the commit. A build missing its version
+ * shows only the brand, and the commit and dirty marker are appended only when
+ * the build actually carries them.
+ *
+ * @returns the version with its optional commit and dirty suffix, or
+ *   `undefined` when the build states no version.
+ */
 function localBuildVersion(): string | undefined {
   const version = process.env.DSH_CLIENT_VERSION
   if (version === undefined) return undefined
@@ -169,8 +179,6 @@ export function SidebarRoot({
     }
   }, [pointerInside])
 
-  const buildVersion = localBuildVersion()
-
   const darwinDesktop = isDarwinDesktop()
   // Rail resting state is the whale mark; hovering swaps in the panel icon
   // (the expand affordance, figma sidebar-hover flow). Expanded it is a plain
@@ -219,6 +227,7 @@ export function SidebarRoot({
             (a button would subtract itself through the global no-drag rule);
             the collapsed rail's logo is the expand toggle below instead. */}
         {wide && (() => {
+          const buildVersion = localBuildVersion()
           const identity = (
             <span className={css.brandIdentity} aria-hidden="true">
               <span className={css.brandMark}>

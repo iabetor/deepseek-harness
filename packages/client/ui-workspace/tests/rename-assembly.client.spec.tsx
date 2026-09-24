@@ -123,15 +123,20 @@ describe('session rename through the assembled browser', () => {
     const trigger = within(row as HTMLElement).getByLabelText('会话“Persisted title”的操作')
     fireEvent.click(trigger)
     expect(view.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '置顶会话', '重命名', '分叉会话', '归档会话', '复制 Session ID', 'Export action', 'Last action',
+      '置顶会话', '重命名', '分叉会话', '归档会话', '复制 Session ID', 'Export action', '删除会话', 'Last action',
     ])
     expect(view.getAllByRole('separator')).toHaveLength(1)
     const last = view.getByRole('menuitem', { name: 'Last action' })
-    const exportRow = view.getByRole('menuitem', { name: 'Export action' })
+    // `delete` (order 500) now sits between the plugin rows and `Last action`
+    // (600), so ArrowUp from the last row reaches the delete confirmation first.
+    const deleteRow = view.getByRole('menuitem', { name: '删除会话' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'End' })
     expect(document.activeElement).toBe(last)
     fireEvent.keyDown(last, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(deleteRow)
+    fireEvent.keyDown(deleteRow, { key: 'ArrowUp' })
+    const exportRow = view.getByRole('menuitem', { name: 'Export action' })
     expect(document.activeElement).toBe(exportRow)
     fireEvent.click(exportRow)
     expect(selected).toHaveBeenCalledWith('export', SID, 'Persisted title')
