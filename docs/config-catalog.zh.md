@@ -3303,6 +3303,12 @@ export interface Config {
 export interface Config {
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
+  /**
+   * Include the harness-owned execution discipline in the
+   * `harness:operating-guidance` section (default true). A deployment that owns
+   * a byte-exact prompt turns it off.
+   */
+  includeOperatingGuidance?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
   includeRuntimeContext?: boolean
   /**
@@ -3325,7 +3331,12 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-system-prompt -->
 
+<<<<<<< HEAD
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-terminal-bash -->
+=======
+来源： [`packages/core/system-prompt/src/index.ts:277`](../packages/core/system-prompt/src/index.ts)
+
+>>>>>>> e7302e9c66 (feat(system-prompt): own the harness-owned execution discipline)
 <a id="deepseek-aidsh-terminal-bash"></a>
 
 ## `@deepseek-ai/dsh-terminal-bash`

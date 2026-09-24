@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-13-harness-owned-operating-guidance.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-13-harness-owned-operating-guidance.md
+/agent-note-harness-owned-operating-guidance:
+  en: 2d96c632b9b39b89
+  zh: 7564beff6232a553
+/agent-note-harness-owned-operating-guidance/problem:
+  en: 9d6c807bb06f10ef
+  zh: 0e85a26b4b117835
+/agent-note-harness-owned-operating-guidance/decision:
+  en: 34f6c3e19e30d149
+  zh: 3f3e711853c3cb18
+/agent-note-harness-owned-operating-guidance/alternatives-considered:
+  en: 7b6134e49954b905
+  zh: 21d6578f9c78703e
+/agent-note-harness-owned-operating-guidance/consequences:
+  en: d3e021eebdbf0209
+  zh: 77f82f9b601cb9ad

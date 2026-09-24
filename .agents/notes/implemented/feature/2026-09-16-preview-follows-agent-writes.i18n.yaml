@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-16-preview-follows-agent-writes.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-preview-follows-agent-writes.md
+/agent-note-preview-follows-agent-writes:
+  en: e3058938c398c73c
+  zh: 58051f52583fad6e
+/agent-note-preview-follows-agent-writes/problem:
+  en: a55e4efd5d2904b6
+  zh: 34c92094cbfb0065
+/agent-note-preview-follows-agent-writes/decision:
+  en: 5a0f4fc2119376a0
+  zh: 224963260f2c55c5
+/agent-note-preview-follows-agent-writes/alternatives-considered:
+  en: 416a52c2986a7e59
+  zh: 51d135f5e530ff19
+/agent-note-preview-follows-agent-writes/consequences:
+  en: db3d725dc38abe3d
+  zh: 8dfe508fe20081bf
+/agent-note-preview-follows-agent-writes/related:
+  en: 71f0769d22c935ce
+  zh: 98d590d4eb4cd6e4
